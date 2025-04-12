@@ -12,6 +12,7 @@ export interface IBlog extends Document {
   };
   imageUrl: string;
   content: string;
+  authorClerkId: string; // Added this field
 }
 
 const BlogSchema: Schema = new Schema(
@@ -27,6 +28,7 @@ const BlogSchema: Schema = new Schema(
     },
     imageUrl: { type: String, required: true },
     content: { type: String, required: true },
+    authorClerkId: { type: String, required: true, index: true }, // Added this line
   },
   {
     timestamps: true,

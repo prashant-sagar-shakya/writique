@@ -14,9 +14,11 @@ import {
   BookOpen,
   Loader2,
   Shield,
+  ShieldAlert,
   Trash2,
+  Users,
 } from "lucide-react";
-import { Blog } from "@/lib/blog-data";
+import { Blog } from "@/lib/blog-data"; // Assuming Blog interface exists here
 import {
   Table,
   TableBody,
@@ -26,58 +28,116 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"; // Import AlertDialog
+import { AlertTriangle } from "lucide-react"; // For Dialog Icon
+
+interface FetchedUser {
+  id: string;
+  clerkId: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  imageUrl?: string;
+  role: "admin" | "user";
+  createdAt: string;
+  updatedAt: string;
+}
 
 const AdminPage = () => {
   const navigate = useNavigate();
-  const { userId, isLoaded } = useAuth();
+  const { getToken, isLoaded: isClerkLoaded, isSignedIn } = useAuth();
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [blogs, setBlogs] = useState<Blog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const isAdmin = userId?.includes("user_2jxxxx"); // Replace with your actual admin check logic
+  const [isAdminUser, setIsAdminUser] = useState(false);
+  const [blogs, setBlogs] = useState<Blog[]>([]);
+  const [blogToDelete, setBlogToDelete] = useState<{
+    id: string;
+    title: string;
+  } | null>(null); // State for dialog
+  // const [users, setUsers] = useState<FetchedUser[]>([]);
 
   const mapBlogData = (data: any[]): Blog[] =>
     data.map((blog) => ({ ...blog, id: blog._id || blog.id }));
-  const fetchAdminData = async () => {
-    if (!isLoaded) return;
-    setLoading(true);
-    setError(null);
-    if (!isAdmin) {
-      navigate("/dashboard");
-      toast({ title: "Access denied", variant: "destructive" });
-      setLoading(false);
-      return;
-    }
-    try {
-      const response = await fetch("/api/blogs");
-      if (!response.ok)
-        throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
-      setBlogs(mapBlogData(data));
-    } catch (e: any) {
-      console.error("Failed to fetch admin data:", e);
-      const errorMsg = e.message || "Failed to load data.";
-      setError(errorMsg);
-      toast({ title: "Error", description: errorMsg, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
     document.title = "Writique - Admin";
-    fetchAdminData();
-  }, [isAdmin, isLoaded, navigate]);
-  const handleDelete = async (id: string, title: string) => {
-    if (!window.confirm(`ADMIN ACTION: Delete "${title}"?`)) return;
+    const checkAdminStatusAndFetchData = async () => {
+      setIsLoading(true);
+      setError(null);
+      setIsAdminUser(false);
+      if (!isClerkLoaded) return;
+      if (!isSignedIn) {
+        toast({ title: "Unauthorized", variant: "destructive" });
+        navigate("/auth");
+        return;
+      }
+      try {
+        const token = await getToken();
+        if (!token) throw new Error("Auth token missing.");
+        const meResponse = await fetch("/api/users/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!meResponse.ok)
+          throw new Error(`Role check failed (${meResponse.status})`);
+        const userData: FetchedUser = await meResponse.json();
+        if (userData && userData.role === "admin") {
+          setIsAdminUser(true);
+          const blogsResponse = await fetch("/api/blogs");
+          if (!blogsResponse.ok)
+            throw new Error(`Blog Fetch Error: ${blogsResponse.status}`);
+          const blogsData = await blogsResponse.json();
+          setBlogs(mapBlogData(blogsData));
+          // TODO: Fetch users data if needed
+        } else {
+          throw new Error("Access denied. Admin privileges required.");
+        }
+      } catch (e: any) {
+        console.error("Admin Check/Fetch failed:", e);
+        setError(e.message || "Failed load or verify role.");
+        toast({
+          title: "Access Denied",
+          description: e.message,
+          variant: "destructive",
+        });
+        navigate("/dashboard");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    checkAdminStatusAndFetchData();
+  }, [isClerkLoaded, isSignedIn, getToken, navigate, toast]);
+
+  const handleDeleteClick = (id: string, title: string) => {
+    setBlogToDelete({ id, title }); // Open the confirmation dialog
+  };
+
+  const confirmDelete = async () => {
+    if (!blogToDelete) return;
+    const { id, title } = blogToDelete;
     try {
-      const response = await fetch(`/api/blogs/${id}`, { method: "DELETE" });
+      const token = await getToken();
+      if (!token) throw new Error("Auth missing.");
+      const response = await fetch(`/api/blogs/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.msg || `Delete failed`);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.msg || `Delete failed: ${response.status}`);
       }
       setBlogs((prevBlogs) => prevBlogs.filter((blog) => blog.id !== id));
       toast({ title: "Blog Deleted", description: `"${title}" removed.` });
+      setBlogToDelete(null); // Close dialog
     } catch (error: any) {
       console.error("Delete failed:", error);
       toast({
@@ -85,28 +145,44 @@ const AdminPage = () => {
         description: error.message,
         variant: "destructive",
       });
+      setBlogToDelete(null); // Close dialog on error
     }
   };
-  const pendingBlogs = blogs.slice(0, 0); // Placeholder - Adjust if backend adds status
-  const allBlogs = blogs;
-  const users: any[] = []; // Placeholder - Implement user fetching if needed
 
-  if (!isLoaded || loading)
+  const pendingBlogs = blogs.slice(0, 0);
+  const allBlogs = blogs;
+  const users: FetchedUser[] = [];
+
+  if (isLoading || !isClerkLoaded) {
     return (
       <div className="flex justify-center items-center py-20">
         <Loader2 className="h-12 w-12 animate-spin text-muted-foreground" />
       </div>
     );
-  if (error)
+  }
+  if (error && !isLoading) {
     return (
-      <div className="text-center py-12 text-destructive border rounded-md">
-        <h2 className="text-xl font-medium">Error</h2>
+      <div className="container mx-auto text-center py-16 text-destructive border rounded-md bg-destructive/5">
+        <ShieldAlert className="h-12 w-12 mx-auto mb-4" />
+        <h1 className="text-2xl font-bold">Access Issue</h1>
         <p className="mt-2">{error}</p>
-        <Button variant="outline" onClick={fetchAdminData} className="mt-4">
-          Retry
+        <Button
+          variant="outline"
+          className="mt-6"
+          onClick={() => navigate("/dashboard")}
+        >
+          Go to Dashboard
         </Button>
       </div>
     );
+  }
+  if (!isAdminUser) {
+    return (
+      <div className="text-center py-10">
+        <p>Insufficient permissions.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 p-4 md:p-6">
@@ -114,7 +190,7 @@ const AdminPage = () => {
         <Shield className="h-8 w-8 text-primary" />
         <div>
           <h1 className="text-3xl font-bold md:text-4xl">Admin Panel</h1>
-          <p className="text-muted-foreground">Manage content and users</p>
+          <p className="text-muted-foreground">Content & User Management</p>
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -133,7 +209,7 @@ const AdminPage = () => {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-2xl">{users.length}</CardTitle>
-            <CardDescription>Users</CardDescription>
+            <CardDescription>Users (N/A)</CardDescription>
           </CardHeader>
         </Card>
         <Card>
@@ -150,14 +226,13 @@ const AdminPage = () => {
           <TabsTrigger value="analytics">Analytics (N/A)</TabsTrigger>
         </TabsList>
         <TabsContent value="blogs" className="pt-6 space-y-6">
-          {/* Add Pending Approval section if status field is implemented */}
           <Card>
             <CardHeader>
               <CardTitle className="text-xl flex items-center gap-2">
                 <BookOpen className="h-5 w-5" />
                 All Blogs ({allBlogs.length})
               </CardTitle>
-              <CardDescription>Manage all blogs</CardDescription>
+              <CardDescription>Manage all blog posts</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -189,7 +264,7 @@ const AdminPage = () => {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive"
-                          onClick={() => handleDelete(blog.id, blog.title)}
+                          onClick={() => handleDeleteClick(blog.id, blog.title)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -210,17 +285,44 @@ const AdminPage = () => {
         </TabsContent>
         <TabsContent value="users" className="pt-6">
           <div className="text-center py-12 border rounded-md">
-            <h3 className="text-xl font-medium">
-              User Management Not Implemented
-            </h3>
+            <h3 className="text-xl font-medium">User Management N/A</h3>
           </div>
         </TabsContent>
         <TabsContent value="analytics" className="pt-6">
           <div className="text-center py-12 border rounded-md">
-            <h3 className="text-xl font-medium">Analytics Not Implemented</h3>
+            <h3 className="text-xl font-medium">Analytics N/A</h3>
           </div>
         </TabsContent>
       </Tabs>
+      {/* Confirmation Dialog for Delete */}
+      <AlertDialog
+        open={!!blogToDelete}
+        onOpenChange={(open) => !open && setBlogToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="text-destructive h-5 w-5" />
+              Confirm Deletion
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Permanently delete blog "{blogToDelete?.title || "this blog"}"?
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setBlogToDelete(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              Confirm Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

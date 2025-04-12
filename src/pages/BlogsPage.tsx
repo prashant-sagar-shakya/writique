@@ -1,23 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
+  CardDescription,
+} from "@/components/ui/card"; // Added CardDescription, CardFooter
 import { Badge } from "@/components/ui/badge";
 import {
   BookOpen,
-  Filter,
-  Heart,
   Search,
   SlidersHorizontal,
   X,
   Loader2,
+  Heart,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -34,25 +33,38 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
+  SheetClose,
 } from "@/components/ui/sheet";
 import { categories, Blog } from "@/lib/blog-data";
-import { Separator } from "@/components/ui/separator";
-import { SignedIn } from "@clerk/clerk-react";
 import { useToast } from "@/components/ui/use-toast";
+import { SignedIn } from "@clerk/clerk-react";
 
 const BlogsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialCategory = searchParams.get("category") || "";
   const [allBlogs, setAllBlogs] = useState<Blog[]>([]);
-  const [filteredBlogs, setFilteredBlogs] = useState<Blog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState(initialCategory);
-  const [sortBy, setSortBy] = useState("newest");
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+
+  // Main state variables (reflect currently applied filters)
+  const [searchTerm, setSearchTerm] = useState(
+    searchParams.get("search") || ""
+  );
+  const [selectedCategory, setSelectedCategory] = useState(
+    searchParams.get("category") || ""
+  );
+  const [sortBy, setSortBy] = useState(searchParams.get("sort") || "newest");
+
+  // Temporary state variables (hold selections inside the sheet)
+  const [tempSelectedCategory, setTempSelectedCategory] =
+    useState(selectedCategory);
+  const [tempSortBy, setTempSortBy] = useState(sortBy);
+
   const { toast } = useToast();
+
   const mapBlogData = (data: any[]): Blog[] =>
     data.map((blog) => ({ ...blog, id: blog._id || blog.id }));
+
   const fetchBlogs = async () => {
     setIsLoading(true);
     setError(null);
@@ -62,7 +74,6 @@ const BlogsPage = () => {
       const data = await response.json();
       const mappedData = mapBlogData(data);
       setAllBlogs(mappedData);
-      setFilteredBlogs(mappedData);
     } catch (e: any) {
       console.error("Fetch failed:", e);
       const msg = e.message || "Failed.";
@@ -72,57 +83,111 @@ const BlogsPage = () => {
       setIsLoading(false);
     }
   };
+
+  // Effect to fetch blogs and sync initial state from URL params
   useEffect(() => {
     document.title = "Writique - All Blogs";
     fetchBlogs();
-  }, []);
+    const urlSearch = searchParams.get("search") || "";
+    const urlCategory = searchParams.get("category") || "";
+    const urlSort = searchParams.get("sort") || "newest";
+    setSearchTerm(urlSearch);
+    setSelectedCategory(urlCategory);
+    setSortBy(urlSort);
+    // Sync temp state with initial main state as well
+    setTempSelectedCategory(urlCategory);
+    setTempSortBy(urlSort);
+  }, []); // Fetch once
+
+  // Effect to update URL when MAIN state variables change
   useEffect(() => {
+    const params = new URLSearchParams();
+    if (searchTerm) params.set("search", searchTerm);
+    if (selectedCategory) params.set("category", selectedCategory);
+    if (sortBy !== "newest") params.set("sort", sortBy); // Only add sort if not default
+    setSearchParams(params, { replace: true }); // Use replace to avoid messy history
+  }, [searchTerm, selectedCategory, sortBy, setSearchParams]);
+
+  // Filter/Sort logic now only depends on the MAIN state variables
+  const filteredBlogs = useMemo(() => {
     let results = [...allBlogs];
-    if (searchTerm) {
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    if (lowerSearchTerm) {
       results = results.filter(
         (b) =>
-          b.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          b.excerpt.toLowerCase().includes(searchTerm.toLowerCase())
+          b.title.toLowerCase().includes(lowerSearchTerm) ||
+          b.excerpt.toLowerCase().includes(lowerSearchTerm)
       );
     }
     if (selectedCategory) {
       results = results.filter((b) => b.category === selectedCategory);
     }
-    if (sortBy === "newest") {
-      results.sort(
-        (a, b) =>
-          new Date(b.createdAt || b.date).getTime() -
-          new Date(a.createdAt || a.date).getTime()
-      );
-    } else if (sortBy === "oldest") {
+    if (sortBy === "oldest") {
       results.sort(
         (a, b) =>
           new Date(a.createdAt || a.date).getTime() -
           new Date(b.createdAt || b.date).getTime()
       );
-    }
-    setFilteredBlogs(results);
-  }, [searchTerm, selectedCategory, sortBy, allBlogs]);
-  useEffect(() => {
-    if (selectedCategory) {
-      setSearchParams({ category: selectedCategory }, { replace: true });
     } else {
-      searchParams.delete("category");
-      setSearchParams(searchParams, { replace: true });
+      results.sort(
+        (a, b) =>
+          new Date(b.createdAt || b.date).getTime() -
+          new Date(a.createdAt || a.date).getTime()
+      );
     }
-  }, [selectedCategory, setSearchParams]);
-  const handleCategoryChange = (value: string) => setSelectedCategory(value);
-  const clearFilters = () => {
+    return results;
+  }, [searchTerm, selectedCategory, sortBy, allBlogs]);
+
+  // Handlers update TEMPORARY state inside the sheet
+  const handleTempCategoryChange = (value: string) => {
+    setTempSelectedCategory(value === "all-cat-value" ? "" : value);
+  };
+  const handleTempSortChange = (value: string) => {
+    setTempSortBy(value);
+  };
+
+  // Apply filters button action
+  const applyFilters = () => {
+    // Update main state FROM temp state
+    setSelectedCategory(tempSelectedCategory);
+    setSortBy(tempSortBy);
+    // Note: Updating the URL search params is handled by the useEffect watching the main state vars
+    setIsSheetOpen(false); // Close the sheet
+  };
+
+  // Clears both main and temporary filters
+  const clearAllFilters = () => {
     setSearchTerm("");
     setSelectedCategory("");
     setSortBy("newest");
+    setTempSelectedCategory(""); // Clear temp state too
+    setTempSortBy("newest");
   };
+
+  const clearCategoryFilter = () => {
+    setSelectedCategory("");
+    setTempSelectedCategory("");
+  };
+
+  const clearSearchFilter = () => {
+    setSearchTerm("");
+    // updateSearchParams(); // Removed direct update - let useEffect handle it
+  };
+
+  // Handler for when the Sheet trigger is clicked or Sheet is closed
+  const handleSheetOpenChange = (open: boolean) => {
+    if (open) {
+      // When opening, sync temp state with current main state
+      setTempSelectedCategory(selectedCategory);
+      setTempSortBy(sortBy);
+    }
+    setIsSheetOpen(open);
+  };
+
   const handleFavoriteBlog = (id: string) => {
-    toast({
-      title: "Added to favorites",
-      description: "Not fully implemented.",
-    });
+    toast({ title: "Favorited (Demo)" });
   };
+
   return (
     <div className="space-y-8 container mx-auto py-8 px-4">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -136,37 +201,58 @@ const BlogsPage = () => {
         </div>
         <div className="flex gap-2 items-center">
           <div className="relative flex-grow md:w-auto">
+            {" "}
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search blogs..."
+              placeholder="Search..."
               className="pl-9 w-full md:w-64"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
+            {searchTerm && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
+                onClick={clearSearchFilter}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
           </div>
-          <Sheet>
+          {/* Use handleSheetOpenChange */}
+          <Sheet open={isSheetOpen} onOpenChange={handleSheetOpenChange}>
             <SheetTrigger asChild>
-              <Button variant="outline" size="icon">
+              <Button variant="outline" size="icon" className="relative">
                 <SlidersHorizontal className="h-4 w-4" />
+                {(selectedCategory || sortBy !== "newest") && (
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
+                  </span>
+                )}
               </Button>
             </SheetTrigger>
             <SheetContent>
               <SheetHeader>
                 <SheetTitle>Filter & Sort</SheetTitle>
-                <SheetDescription>Refine your search</SheetDescription>
+                <SheetDescription>Refine results</SheetDescription>
               </SheetHeader>
               <div className="space-y-6 py-4">
                 <div className="space-y-2">
-                  <h3 className="text-sm font-medium">Categories</h3>
+                  <h3 className="text-sm font-medium">Category</h3>
+                  {/* Bind to TEMP state, update via TEMP handler */}
                   <Select
-                    value={selectedCategory}
-                    onValueChange={handleCategoryChange}
+                    value={tempSelectedCategory || "all-cat-value"}
+                    onValueChange={handleTempCategoryChange}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="All Categories" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All Categories</SelectItem>
+                      <SelectItem value="all-cat-value">
+                        All Categories
+                      </SelectItem>
                       {categories.map((category) => (
                         <SelectItem key={category.id} value={category.name}>
                           {category.name}
@@ -177,7 +263,11 @@ const BlogsPage = () => {
                 </div>
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium">Sort By</h3>
-                  <Select value={sortBy} onValueChange={setSortBy}>
+                  {/* Bind to TEMP state, update via TEMP handler */}
+                  <Select
+                    value={tempSortBy}
+                    onValueChange={handleTempSortChange}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -187,29 +277,39 @@ const BlogsPage = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button
-                  variant="outline"
-                  onClick={clearFilters}
-                  className="w-full"
-                >
-                  Clear Filters
+                <Button onClick={applyFilters} className="w-full">
+                  Apply
                 </Button>
+                {(tempSelectedCategory ||
+                  searchTerm ||
+                  tempSortBy !== "newest") && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      clearAllFilters();
+                      setIsSheetOpen(false);
+                    }}
+                    className="w-full"
+                  >
+                    Clear & Close
+                  </Button>
+                )}
               </div>
             </SheetContent>
           </Sheet>
         </div>
       </div>
-      {(selectedCategory || searchTerm) && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-muted-foreground">Filters:</span>
+      {(selectedCategory || searchTerm || sortBy !== "newest") && (
+        <div className="flex items-center gap-2 flex-wrap text-sm">
+          <span className="text-muted-foreground">Active:</span>
           {selectedCategory && (
             <Badge variant="secondary">
               {selectedCategory}
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-4 w-4 ml-1 p-0 hover:bg-transparent"
-                onClick={() => setSelectedCategory("")}
+                className="h-4 w-4 ml-1 p-0"
+                onClick={clearCategoryFilter}
               >
                 <X className="h-3 w-3" />
               </Button>
@@ -217,12 +317,25 @@ const BlogsPage = () => {
           )}
           {searchTerm && (
             <Badge variant="secondary">
-              Search: "{searchTerm}"
+              "{searchTerm}"
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-4 w-4 ml-1 p-0 hover:bg-transparent"
-                onClick={() => setSearchTerm("")}
+                className="h-4 w-4 ml-1 p-0"
+                onClick={clearSearchFilter}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </Badge>
+          )}
+          {sortBy !== "newest" && (
+            <Badge variant="secondary">
+              {sortBy === "oldest" ? "Oldest" : "Newest"}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 ml-1 p-0"
+                onClick={() => setSortBy("newest")}
               >
                 <X className="h-3 w-3" />
               </Button>
@@ -231,32 +344,31 @@ const BlogsPage = () => {
           <Button
             variant="link"
             size="sm"
-            className="h-7 text-xs p-0 text-primary"
-            onClick={clearFilters}
+            className="h-auto p-0 text-xs text-primary"
+            onClick={clearAllFilters}
           >
-            Clear all
+            Clear All
           </Button>
         </div>
       )}
+
       {isLoading ? (
-        <div className="flex justify-center items-center py-20">
+        <div className="flex justify-center py-20">
           <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
         <div className="text-center py-16 text-destructive border rounded">
-          <h2 className="text-xl font-bold">Error Loading Blogs</h2>
+          <h2 className="text-xl font-bold">Error</h2>
           <p className="mt-2">{error}</p>
           <Button variant="outline" onClick={fetchBlogs} className="mt-4">
-            Try Again
+            Retry
           </Button>
         </div>
       ) : filteredBlogs.length === 0 ? (
         <div className="text-center py-16">
           <h2 className="text-2xl font-bold">No blogs found</h2>
-          <p className="text-muted-foreground mt-2">
-            Try different filters or search.
-          </p>
-          <Button variant="outline" className="mt-4" onClick={clearFilters}>
+          <p className="text-muted-foreground mt-2">Try different filters.</p>
+          <Button variant="outline" className="mt-4" onClick={clearAllFilters}>
             Clear Filters
           </Button>
         </div>

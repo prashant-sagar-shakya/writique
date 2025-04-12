@@ -17,12 +17,10 @@ interface Category {
   name: string;
   icon: LucideIcon;
 }
-
 export interface Author {
   name: string;
   avatar: string;
 }
-
 export interface Blog {
   id: string;
   _id?: string;
@@ -34,10 +32,10 @@ export interface Blog {
   author: Author;
   imageUrl: string;
   content: string;
+  authorClerkId?: string;
   createdAt?: string;
   updatedAt?: string;
 }
-
 export const categories: Category[] = [
   { id: "1", name: "Technology", icon: Laptop },
   { id: "2", name: "Travel", icon: Globe },

@@ -3,9 +3,13 @@ import multer from "multer";
 import cloudinary from "../config/cloudinary";
 import Blog from "../models/Blog";
 import path from "path";
+import {
+  requireAuthManual,
+  syncUser,
+  isAdmin,
+} from "../middleware/authMiddleware";
 
 const router = express.Router();
-
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
@@ -63,111 +67,151 @@ router.get("/:id", async (req: Request, res: Response) => {
 
 router.post(
   "/",
+  requireAuthManual,
+  syncUser,
   upload.single("imageFile"),
   async (req: Request, res: Response) => {
-    console.log("POST /api/blogs Request Received");
-    console.log("Request Body:", req.body);
-    console.log("File Info from Multer:", req.file);
-
-    let authorObject = {
-      name: "Anonymous",
-      avatar: "https://i.pravatar.cc/150?img=1",
-    };
+    const {
+      title,
+      excerpt,
+      date,
+      readTime,
+      category,
+      content,
+      imageUrl: manualImageUrl,
+    } = req.body;
+    const clerkUserId = req.auth?.userId;
+    const localUser = req.user;
+    if (!clerkUserId || !localUser)
+      return res.status(401).json({ message: "Auth failed." });
     let blogImageUrl =
+      manualImageUrl ||
       "https://images.unsplash.com/photo-1674027444485-cec3da58eef4?q=80&w=1932&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D";
-
     try {
-      const {
-        author: authorString,
-        imageUrl: manualImageUrl,
-        ...otherBodyFields
-      } = req.body;
-      console.log("Received Author String:", authorString);
-      console.log("Received Manual Image URL:", manualImageUrl);
-      console.log("Received Other Body Fields:", otherBodyFields);
-
-      if (manualImageUrl && !req.file) {
-        blogImageUrl = manualImageUrl;
-        console.log("Using manually provided Image URL:", blogImageUrl);
-      }
-
-      try {
-        if (authorString) {
-          authorObject = JSON.parse(authorString);
-          console.log("Parsed Author:", authorObject);
-        } else {
-          console.log("Author string missing, using default.");
-        }
-      } catch (parseError) {
-        console.error("Author parsing failed:", parseError);
-        return res.status(400).json({ msg: "Invalid author data format." });
-      }
-
-      if (req.file) {
-        console.log("Attempting Cloudinary upload for:", req.file.originalname);
+      if (req.file)
         blogImageUrl = await uploadToCloudinary(
           req.file.buffer,
           req.file.originalname
         );
-        console.log("Cloudinary upload successful, URL:", blogImageUrl);
-      } else {
-        console.log("No file uploaded via multer, final URL:", blogImageUrl);
-      }
-
       const newBlog = new Blog({
-        ...otherBodyFields,
-        author: authorObject,
+        title,
+        excerpt,
+        date,
+        readTime,
+        category,
+        content,
         imageUrl: blogImageUrl,
-        date: otherBodyFields.date || new Date().toISOString().split("T")[0],
-        readTime: otherBodyFields.readTime || "N/A",
+        author: {
+          name:
+            `${localUser.firstName || ""} ${localUser.lastName || ""}`.trim() ||
+            localUser.email,
+          avatar: localUser.imageUrl || "https://i.pravatar.cc/150?img=1",
+        },
+        authorClerkId: clerkUserId,
       });
-      console.log(
-        "Attempting to save blog:",
-        JSON.stringify(newBlog.toObject(), null, 2)
-      ); // Log the object going to MongoDB
-
-      const blog = await newBlog.save();
-      console.log("Blog saved successfully:", blog._id);
-
-      res.status(201).json(blog);
+      const savedBlog = await newBlog.save();
+      res.status(201).json(savedBlog);
     } catch (err: any) {
-      console.error("!!! ERROR IN POST /api/blogs ROUTE !!!");
-      console.error("Error name:", err.name);
-      console.error("Error message:", err.message);
-      console.error("Error stack trace below:");
-      console.error(err); // Log the full error object
-      if (err.message?.includes("File size limit exceeded")) {
-        return res
-          .status(413)
-          .json({ msg: "Image file size exceeds the 10MB limit." });
-      }
-      if (err.http_code === 401 || err.message?.includes("Invalid API key")) {
-        return res
-          .status(500)
-          .json({
-            msg: "Cloudinary configuration error. Check API credentials.",
-          });
-      }
-      res.status(500).send("Server Error during blog creation.");
+      console.error("POST ERR:", err);
+      if (err.message?.includes("size"))
+        return res.status(413).json({ msg: "Image > 10MB limit." });
+      if (err.http_code === 401)
+        return res.status(500).json({ msg: "Cloudinary config error." });
+      res.status(500).send("Server Error creating blog.");
     }
   }
 );
 
-router.delete("/:id", async (req: Request, res: Response) => {
-  try {
-    const blog = await Blog.findById(req.params.id);
-    if (!blog) {
-      return res.status(404).json({ msg: "Blog not found" });
+router.put(
+  "/:id",
+  requireAuthManual,
+  syncUser,
+  upload.single("imageFile"),
+  async (req: Request, res: Response) => {
+    const {
+      title,
+      excerpt,
+      category,
+      content,
+      imageUrl: manualImageUrl,
+    } = req.body;
+    const blogId = req.params.id;
+    const clerkUserId = req.auth?.userId;
+    const isAdminUser = req.user?.role === "admin";
+    let updateData: any = { title, excerpt, category, content };
+    let newImageUrl = manualImageUrl;
+    try {
+      const blog = await Blog.findById(blogId);
+      if (!blog) return res.status(404).json({ msg: "Blog not found" });
+      if (!isAdminUser && blog.authorClerkId !== clerkUserId)
+        return res.status(403).json({ msg: "User not authorized" });
+      if (req.file) {
+        newImageUrl = await uploadToCloudinary(
+          req.file.buffer,
+          req.file.originalname
+        );
+        updateData.imageUrl = newImageUrl;
+      } else if (
+        manualImageUrl !== undefined &&
+        manualImageUrl !== blog.imageUrl
+      ) {
+        updateData.imageUrl = manualImageUrl;
+      }
+      const updatedBlog = await Blog.findByIdAndUpdate(
+        blogId,
+        { $set: updateData },
+        { new: true }
+      );
+      if (!updatedBlog) return res.status(404).json({ msg: "Update failed" });
+      res.json(updatedBlog);
+    } catch (err: any) {
+      console.error(`PUT ERR /api/blogs/${blogId}:`, err);
+      if (err.message?.includes("size"))
+        return res.status(413).json({ msg: "Image > 10MB limit." });
+      if (err.http_code === 401)
+        return res.status(500).json({ msg: "Cloudinary error." });
+      res.status(500).send("Server Error updating.");
     }
-    await blog.deleteOne();
-    res.json({ msg: "Blog removed" });
-  } catch (err: any) {
-    console.error(err.message);
-    if (err.kind === "ObjectId") {
-      return res.status(404).json({ msg: "Blog not found" });
-    }
-    res.status(500).send("Server Error");
   }
-});
+);
+
+// Removed isAdmin middleware, logic moved inside
+router.delete(
+  "/:id",
+  requireAuthManual,
+  syncUser,
+  async (req: Request, res: Response) => {
+    const blogId = req.params.id;
+    const requestingUserId = req.auth?.userId;
+    const isRequestingUserAdmin = req.user?.role === "admin";
+
+    try {
+      const blog = await Blog.findById(blogId);
+      if (!blog) {
+        return res.status(404).json({ msg: "Blog not found" });
+      }
+
+      // Authorization check: Admin OR Author of the blog
+      if (!isRequestingUserAdmin && blog.authorClerkId !== requestingUserId) {
+        return res
+          .status(403)
+          .json({ msg: "Forbidden: You can only delete your own blogs." });
+      }
+
+      await blog.deleteOne();
+      res.json({
+        msg: `Blog removed successfully by ${
+          isRequestingUserAdmin ? "admin" : "owner"
+        }`,
+      });
+    } catch (err: any) {
+      console.error(`DELETE ERR ${blogId}:`, err);
+      if (err.kind === "ObjectId") {
+        return res.status(404).json({ msg: "Blog not found" });
+      }
+      res.status(500).send("Server Error deleting blog.");
+    }
+  }
+);
 
 export default router;

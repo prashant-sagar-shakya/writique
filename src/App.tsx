@@ -18,6 +18,7 @@ import AdminPage from "./pages/AdminPage";
 import NotFound from "./pages/NotFound";
 import AuthPage from "./pages/AuthPage";
 import CreateBlogPage from "./pages/CreateBlogPage";
+import EditBlogPage from "./pages/EditBlogPage";
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const queryClient = new QueryClient();
@@ -25,14 +26,15 @@ const queryClient = new QueryClient();
 const AppContent = () => {
   return (
     <TooltipProvider>
-      <Toaster />
-      <Sonner />
+      {" "}
+      <Toaster /> <Sonner />{" "}
       <Layout>
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/blogs" element={<BlogsPage />} />
-          <Route path="/blogs/:blogId" element={<BlogDetailPage />} />
-          <Route path="/auth" element={<AuthPage />} />
+          {" "}
+          <Route path="/" element={<HomePage />} />{" "}
+          <Route path="/blogs" element={<BlogsPage />} />{" "}
+          <Route path="/blogs/:blogId" element={<BlogDetailPage />} />{" "}
+          <Route path="/auth" element={<AuthPage />} />{" "}
           <Route
             path="/dashboard"
             element={
@@ -40,7 +42,7 @@ const AppContent = () => {
                 <DashboardPage />
               </SignedIn>
             }
-          />
+          />{" "}
           <Route
             path="/favorites"
             element={
@@ -48,7 +50,7 @@ const AppContent = () => {
                 <FavoritesPage />
               </SignedIn>
             }
-          />
+          />{" "}
           <Route
             path="/admin"
             element={
@@ -56,7 +58,7 @@ const AppContent = () => {
                 <AdminPage />
               </SignedIn>
             }
-          />
+          />{" "}
           <Route
             path="/create-blog"
             element={
@@ -64,14 +66,21 @@ const AppContent = () => {
                 <CreateBlogPage />
               </SignedIn>
             }
-          />
-          <Route path="*" element={<NotFound />} />
+          />{" "}
+          <Route
+            path="/edit-blog/:blogId"
+            element={
+              <SignedIn>
+                <EditBlogPage />
+              </SignedIn>
+            }
+          />{" "}
+          <Route path="*" element={<NotFound />} />{" "}
         </Routes>
-      </Layout>
+      </Layout>{" "}
     </TooltipProvider>
   );
 };
-
 const ClerkProviderWithTheme = ({
   children,
 }: {
@@ -79,8 +88,8 @@ const ClerkProviderWithTheme = ({
 }) => {
   const { appliedTheme } = useTheme();
   if (!PUBLISHABLE_KEY) {
-    console.error("Clerk Publishable Key is missing!");
-    return <div>Configuration Error: Missing Clerk Key</div>;
+    console.error("Clerk PK missing!");
+    return <div>Config Error</div>;
   }
   return (
     <ClerkProvider
@@ -91,19 +100,19 @@ const ClerkProviderWithTheme = ({
     </ClerkProvider>
   );
 };
-
 const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
+      {" "}
       <ThemeProvider defaultTheme="system" storageKey="writique-theme">
+        {" "}
         <ClerkProviderWithTheme>
           <BrowserRouter>
             <AppContent />
           </BrowserRouter>
-        </ClerkProviderWithTheme>
-      </ThemeProvider>
+        </ClerkProviderWithTheme>{" "}
+      </ThemeProvider>{" "}
     </QueryClientProvider>
   );
 };
-
 export default App;
