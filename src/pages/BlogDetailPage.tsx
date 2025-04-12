@@ -3,12 +3,11 @@ import { Link, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, ChevronLeft, Heart, Share2 } from "lucide-react";
+import { BookOpen, ChevronLeft, Heart, Share2, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { SignedIn } from "@clerk/clerk-react";
 import { useToast } from "@/components/ui/use-toast";
-import { useBlogs } from "@/context/BlogContext";
 import { Blog } from "@/lib/blog-data";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -16,48 +15,73 @@ import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 const BlogDetailPage = () => {
   const { blogId } = useParams<{ blogId: string }>();
-  const { blogs } = useBlogs();
   const [blog, setBlog] = useState<Blog | null>(null);
   const [relatedBlogs, setRelatedBlogs] = useState<Blog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [isLiked, setIsLiked] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
-
+  const mapBlogData = (data: any[]): Blog[] =>
+    data.map((blog) => ({ ...blog, id: blog._id || blog.id }));
   useEffect(() => {
-    const foundBlog = blogs.find((b) => b.id === blogId);
-
-    if (foundBlog) {
-      setBlog(foundBlog);
-      document.title = `Writique - ${foundBlog.title}`;
-
-      const related = blogs
-        .filter(
-          (b) => b.category === foundBlog.category && b.id !== foundBlog.id
-        )
-        .slice(0, 3);
-      setRelatedBlogs(related);
-
-      window.scrollTo(0, 0);
-    } else {
+    const fetchBlogAndRelated = async () => {
+      if (!blogId) return;
+      setIsLoading(true);
+      setError(null);
       setBlog(null);
       setRelatedBlogs([]);
-      document.title = "Writique - Blog Not Found";
-    }
-  }, [blogId, blogs]);
-
+      try {
+        const response = await fetch(`/api/blogs/${blogId}`);
+        if (response.status === 404) throw new Error("Blog not found");
+        if (!response.ok)
+          throw new Error(`HTTP error! status: ${response.status}`);
+        const fetchedBlogData = await response.json();
+        const formattedBlog = {
+          ...fetchedBlogData,
+          id: fetchedBlogData._id || fetchedBlogData.id,
+        };
+        setBlog(formattedBlog);
+        document.title = `Writique - ${formattedBlog.title}`;
+        const allBlogsResponse = await fetch("/api/blogs");
+        if (!allBlogsResponse.ok)
+          throw new Error("Failed to fetch related blogs");
+        const allBlogsData = await allBlogsResponse.json();
+        const related = mapBlogData(allBlogsData)
+          .filter(
+            (b) =>
+              b.category === formattedBlog.category && b.id !== formattedBlog.id
+          )
+          .slice(0, 3);
+        setRelatedBlogs(related);
+        window.scrollTo(0, 0);
+      } catch (e: any) {
+        console.error("Fetch failed:", e);
+        const errorMsg = e.message || "Failed to load.";
+        setError(errorMsg);
+        document.title = "Writique - Blog Not Found";
+        if (errorMsg !== "Blog not found") {
+          toast({
+            title: "Error",
+            description: "Could not load.",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchBlogAndRelated();
+  }, [blogId]);
   const toggleLike = () => {
     setIsLiked(!isLiked);
     toast({
       title: isLiked ? "Removed from favorites" : "Added to favorites",
-      description: isLiked
-        ? `"${blog?.title}" removed from your favorites.`
-        : `"${blog?.title}" added to your favorites.`,
+      description: `"${blog?.title}" ${isLiked ? "removed" : "added"}.`,
     });
   };
-
   const handleShare = () => {
     if (!blog) return;
-
     if (navigator.share) {
       navigator
         .share({
@@ -65,36 +89,47 @@ const BlogDetailPage = () => {
           text: blog.excerpt,
           url: window.location.href,
         })
-        .catch((error) => console.log("Error sharing:", error));
+        .catch((error) => console.log("Share err:", error));
     } else {
       navigator.clipboard.writeText(window.location.href);
-      toast({
-        title: "Link Copied!",
-        description: "Blog post URL copied to clipboard.",
-      });
+      toast({ title: "Link Copied!", description: "URL copied." });
     }
   };
-
-  if (!blog) {
+  if (isLoading)
+    return (
+      <div className="container mx-auto flex justify-center items-center py-20">
+        <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
+      </div>
+    );
+  if (error === "Blog not found" || !blog)
     return (
       <div className="container mx-auto text-center py-16">
         <h1 className="text-2xl font-bold">Blog Not Found</h1>
-        <p className="text-foreground/70 mt-2">
-          Sorry, the blog post you're looking for doesn't exist or has been
-          removed.
-        </p>
+        <p className="text-muted-foreground mt-2">Doesn't exist.</p>
         <Button
           variant="outline"
           className="mt-4"
           onClick={() => navigate("/blogs")}
         >
           <ChevronLeft className="mr-2 h-4 w-4" />
-          Back to Blogs
+          Back
         </Button>
       </div>
     );
-  }
-
+  if (error)
+    return (
+      <div className="container mx-auto text-center py-16 text-destructive">
+        <h1 className="text-2xl font-bold">Error</h1>
+        <p className="mt-2">{error}</p>
+        <Button
+          variant="outline"
+          className="mt-4"
+          onClick={() => window.location.reload()}
+        >
+          Reload
+        </Button>
+      </div>
+    );
   return (
     <div className="container mx-auto max-w-3xl space-y-10 py-8 px-4">
       <Button
@@ -106,7 +141,6 @@ const BlogDetailPage = () => {
         <ChevronLeft className="mr-2 h-4 w-4" />
         Back
       </Button>
-
       <article className="space-y-6">
         <header className="space-y-3 border-b pb-6">
           <Badge variant="secondary">{blog.category}</Badge>
@@ -162,7 +196,6 @@ const BlogDetailPage = () => {
             </Button>
           </div>
         </header>
-
         {blog.imageUrl && (
           <div className="aspect-video relative my-6 rounded-lg overflow-hidden border">
             <img
@@ -172,11 +205,10 @@ const BlogDetailPage = () => {
             />
           </div>
         )}
-
         <div className="prose dark:prose-invert max-w-none lg:prose-lg prose-img:rounded-md prose-img:border">
           <ReactMarkdown
             components={{
-              code({ node, inline, className, children, ...props }: { node: any, inline: boolean, className?: string, children: any[] }) {
+              code({ node, inline, className, children, ...props }) {
                 const match = /language-(\w+)/.exec(className || "");
                 return !inline && match ? (
                   <SyntaxHighlighter
@@ -199,9 +231,7 @@ const BlogDetailPage = () => {
           </ReactMarkdown>
         </div>
       </article>
-
       <Separator />
-
       {relatedBlogs.length > 0 && (
         <section className="space-y-6">
           <h2 className="text-2xl font-bold">Related Blogs</h2>
@@ -240,5 +270,4 @@ const BlogDetailPage = () => {
     </div>
   );
 };
-
 export default BlogDetailPage;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,99 +10,154 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { categories, Blog } from "@/lib/blog-data";
+import { categories } from "@/lib/blog-data";
 import { useToast } from "@/components/ui/use-toast";
 import { useNavigate } from "react-router-dom";
-import { useBlogs } from "@/context/BlogContext"; // Import the context hook
-import { useUser } from "@clerk/clerk-react"; // Import useUser to prefill author
+import { useUser } from "@clerk/clerk-react";
+import { Loader2, Paperclip, XCircle } from "lucide-react";
 
 const CreateBlogPage = () => {
-  const { user } = useUser(); // Get current user info from Clerk
+  const { user } = useUser();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [category, setCategory] = useState("");
   const [excerpt, setExcerpt] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  // Prefill author name and attempt to get avatar from Clerk
-  const [authorName, setAuthorName] = useState(user?.fullName || "");
-  const [authorAvatar, setAuthorAvatar] = useState(user?.imageUrl || "");
-
+  const [imageUrl, setImageUrl] = useState(""); // For manual URL input/pasting
+  const [selectedFile, setSelectedFile] = useState<File | null>(null); // State for the selected file object
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null); // For local file preview
+  const [authorName, setAuthorName] = useState("");
+  const [authorAvatar, setAuthorAvatar] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { addBlog } = useBlogs(); // Get addBlog from context
+
+  useEffect(() => {
+    if (user) {
+      setAuthorName(user.fullName || "");
+      setAuthorAvatar(user.imageUrl || "");
+    }
+  }, [user]);
+
+  // Effect to create local preview URL when a file is selected
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    if (selectedFile) {
+      objectUrl = URL.createObjectURL(selectedFile);
+      setPreviewUrl(objectUrl);
+    } else {
+      setPreviewUrl(null); // Clear preview if file is removed
+    }
+    // Cleanup function to revoke the object URL
+    return () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [selectedFile]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
 
     if (!title || !content || !category || !excerpt || !authorName) {
       toast({
         title: "Missing fields",
-        description: "Please fill in all required fields.",
+        description: "Please fill required fields.",
         variant: "destructive",
       });
+      setIsLoading(false);
       return;
     }
 
-    const finalAuthorName = authorName || user?.fullName || "Anonymous";
-    const finalAuthorAvatar =
-      authorAvatar || user?.imageUrl || "https://i.pravatar.cc/150?img=1";
+    // Prepare FormData
+    const formData = new FormData();
+    formData.append("title", title);
+    formData.append("content", content);
+    formData.append("category", category);
+    formData.append("excerpt", excerpt);
+    formData.append("date", new Date().toISOString().split("T")[0]);
+    formData.append(
+      "readTime",
+      `${Math.ceil(content.split(" ").length / 200)} min read`
+    );
 
-    const newBlog: Blog = {
-      id: Date.now().toString(),
-      title,
-      excerpt,
-      date: new Date().toISOString().split("T")[0],
-      readTime: `${Math.ceil(content.split(" ").length / 200)} min read`,
-      category,
-      author: {
-        name: finalAuthorName,
-        avatar: finalAuthorAvatar,
-      },
-      imageUrl:
+    // Author needs to be stringified for FormData
+    const finalAuthorName = authorName || "Anonymous";
+    const finalAuthorAvatar = authorAvatar || "https://i.pravatar.cc/150?img=1";
+    formData.append(
+      "author",
+      JSON.stringify({ name: finalAuthorName, avatar: finalAuthorAvatar })
+    );
+
+    // Append the actual file if selected, otherwise append the manual image URL (or default)
+    if (selectedFile) {
+      formData.append("imageFile", selectedFile); // Backend expects 'imageFile'
+      console.log("Appending file to FormData:", selectedFile.name);
+    } else {
+      const finalImageUrl =
         imageUrl ||
-        "https://images.unsplash.com/photo-1674027444485-cec3da58eef4?q=80&w=1932&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
-      content,
-    };
+        "https://images.unsplash.com/photo-1674027444485-cec3da58eef4?q=80&w=1932&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D";
+      formData.append("imageUrl", finalImageUrl); // Backend can check for this if no file
+      console.log("Appending manual/default URL to FormData:", finalImageUrl);
+    }
 
-    addBlog(newBlog); // Add the blog using the context function
+    try {
+      // No need for Content-Type header, FormData sets it automatically
+      const response = await fetch("/api/blogs", {
+        method: "POST",
+        body: formData, // Send FormData directly
+      });
 
-    toast({
-      title: "Blog created successfully",
-      description: "Your blog post has been saved.",
-    });
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({
+            msg: "An unknown error occurred during blog creation.",
+          }));
+        throw new Error(
+          errorData.msg || `HTTP error! status: ${response.status}`
+        );
+      }
 
-    navigate("/dashboard");
+      toast({
+        title: "Blog created successfully!",
+        description: "Post saved & image uploaded.",
+      });
+      navigate("/dashboard");
+    } catch (error: any) {
+      console.error("Failed to create blog:", error);
+      toast({
+        title: "Error Creating Blog",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleImageUpload = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        try {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            setImageUrl(reader.result as string); // Use data URL for preview
-          };
-          reader.readAsDataURL(file);
-
-          toast({
-            title: "Image selected",
-            description: `${file.name} is ready. URL will be used on submit.`,
-          });
-        } catch (error) {
-          console.error("Image selection failed:", error);
-          toast({
-            title: "Image selection failed",
-            description: "Could not process image. Please try again.",
-            variant: "destructive",
-          });
-        }
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Basic size check on frontend (optional, backend limit is definitive)
+      if (file.size > 10 * 1024 * 1024) {
+        // ~10MB
+        toast({
+          title: "File Too Large",
+          description: "Image must be under 10MB.",
+          variant: "destructive",
+        });
+        return;
       }
-    };
-    input.click();
+      setSelectedFile(file);
+      setImageUrl(""); // Clear manual URL if a file is chosen
+      toast({ title: "Image Selected", description: file.name });
+    }
+  };
+
+  const clearSelectedFile = () => {
+    setSelectedFile(null);
+    // Optionally clear preview here if needed, though useEffect handles it
   };
 
   return (
@@ -110,7 +165,6 @@ const CreateBlogPage = () => {
       <h1 className="text-3xl font-bold mb-8 text-center">
         Create New Blog Post
       </h1>
-
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="space-y-2">
           <Label htmlFor="title">Title</Label>
@@ -121,12 +175,17 @@ const CreateBlogPage = () => {
             placeholder="Enter blog title"
             required
             className="text-base"
+            disabled={isLoading}
           />
         </div>
-
         <div className="space-y-2">
           <Label htmlFor="category">Category</Label>
-          <Select value={category} onValueChange={setCategory} required>
+          <Select
+            value={category}
+            onValueChange={setCategory}
+            required
+            disabled={isLoading}
+          >
             <SelectTrigger id="category">
               <SelectValue placeholder="Select a category" />
             </SelectTrigger>
@@ -141,59 +200,97 @@ const CreateBlogPage = () => {
               ))}
             </SelectContent>
           </Select>
-          {!category &&
-            title && ( // Show required message only if title is entered
-              <p className="text-sm text-red-500">Category is required.</p>
-            )}
         </div>
-
         <div className="space-y-2">
-          <Label htmlFor="excerpt">Excerpt (Short Summary)</Label>
+          <Label htmlFor="excerpt">Excerpt</Label>
           <Textarea
             id="excerpt"
             value={excerpt}
             onChange={(e) => setExcerpt(e.target.value)}
-            placeholder="Write a brief summary that appears in listings..."
-            rows={2}
+            placeholder="Write a brief summary..."
+            rows={3}
             required
             maxLength={200}
             className="text-base resize-y"
+            disabled={isLoading}
           />
           <p className="text-sm text-muted-foreground">
-            {excerpt.length}/200 characters
+            {excerpt.length}/200 chars
           </p>
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="image-upload-button">Featured Image</Label>
+          <Label htmlFor="image-file-input">Featured Image</Label>
           <div className="flex items-center gap-4">
+            {/* Hidden File Input */}
+            <input
+              type="file"
+              id="image-file-input"
+              accept="image/*"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            {/* Button to Trigger File Input */}
             <Button
-              id="image-upload-button"
               type="button"
               variant="outline"
-              onClick={handleImageUpload}
+              onClick={() =>
+                document.getElementById("image-file-input")?.click()
+              }
+              disabled={isLoading}
             >
-              {imageUrl && imageUrl.startsWith("data:image")
-                ? "Change Image"
-                : "Upload Image"}
+              <Paperclip className="mr-2 h-4 w-4" /> Choose File
             </Button>
-            {imageUrl && (
-              <img
-                src={imageUrl}
-                alt="Preview"
-                className="h-16 w-auto rounded border object-cover" // Added object-cover
-              />
-            )}
+            {/* Manual URL Input */}
+            <Input
+              id="imageUrlInput"
+              value={imageUrl}
+              onChange={(e) => {
+                setImageUrl(e.target.value);
+                setSelectedFile(null);
+              }}
+              placeholder="Or paste image URL"
+              className="text-sm"
+              disabled={isLoading}
+            />
           </div>
-          <Input
-            id="imageUrlInput"
-            value={imageUrl.startsWith("data:image") ? "" : imageUrl} // Clear input if it's a data URL
-            onChange={(e) => setImageUrl(e.target.value)}
-            placeholder="Or paste image URL here"
-            className="mt-2 text-sm"
-          />
-          <p className="text-xs text-muted-foreground">
-            Upload an image (preview shown) or provide a direct URL.
+          {/* Preview Area */}
+          {selectedFile && previewUrl && (
+            <div className="mt-2 flex items-center gap-2 border p-2 rounded-md">
+              <img
+                src={previewUrl}
+                alt="Preview"
+                className="h-16 w-16 rounded object-cover"
+              />
+              <div className="text-sm overflow-hidden">
+                <p className="font-medium truncate">{selectedFile.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {(selectedFile.size / 1024).toFixed(1)} KB
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={clearSelectedFile}
+                className="ml-auto text-muted-foreground hover:text-destructive h-6 w-6"
+              >
+                <XCircle className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+          {!selectedFile &&
+            imageUrl && ( // Show pasted URL preview if no file is selected
+              <div className="mt-2">
+                <img
+                  src={imageUrl}
+                  alt="URL Preview"
+                  className="h-16 w-auto rounded border object-cover"
+                />
+              </div>
+            )}
+          <p className="text-xs text-muted-foreground mt-1">
+            Max 10MB. Choose a file OR paste a URL.
           </p>
         </div>
 
@@ -204,49 +301,56 @@ const CreateBlogPage = () => {
               id="authorName"
               value={authorName}
               onChange={(e) => setAuthorName(e.target.value)}
-              placeholder="Enter author's name"
+              placeholder="Author's name"
               required
               className="text-base"
+              disabled={isLoading}
             />
           </div>
-
           <div className="space-y-2">
             <Label htmlFor="authorAvatar">Author Avatar URL</Label>
             <Input
               id="authorAvatar"
               value={authorAvatar}
               onChange={(e) => setAuthorAvatar(e.target.value)}
-              placeholder="Optional: Paste avatar URL or leave blank"
+              placeholder="Optional URL"
               className="text-base"
+              disabled={isLoading}
             />
             <p className="text-xs text-muted-foreground">
-              Defaults to your profile if logged in.
+              Defaults to profile.
             </p>
           </div>
         </div>
-
         <div className="space-y-2">
           <Label htmlFor="content">Content</Label>
           <Textarea
             id="content"
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Write your blog content here..."
-            rows={5} // Increased rows
+            placeholder="Write content (Markdown supported)..."
+            rows={15}
             required
             className="text-base resize-y"
+            disabled={isLoading}
           />
         </div>
-
         <div className="flex justify-end gap-3 pt-4">
-          <Button type="button" variant="outline" onClick={() => navigate(-1)}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate(-1)}
+            disabled={isLoading}
+          >
             Cancel
           </Button>
-          <Button type="submit">Publish Blog Post</Button>
+          <Button type="submit" disabled={isLoading}>
+            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isLoading ? "Publishing..." : "Publish Blog Post"}
+          </Button>
         </div>
       </form>
     </div>
   );
 };
-
 export default CreateBlogPage;
