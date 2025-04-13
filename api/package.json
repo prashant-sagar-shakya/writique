@@ -1,7 +1,0 @@
-{
-  "name": "writique-api",
-  "version": "1.0.0",
-  "description": "Backend API for Writique",
-  "main": "dist/server.js",
-  "type": "commonjs"
-}

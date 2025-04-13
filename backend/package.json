@@ -1,0 +1,30 @@
+{
+  "name": "writique-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Writique",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "node server.js",
+    "dev": "npm run build && nodemon server.js"
+  },
+  "dependencies": {
+    "@clerk/clerk-sdk-node": "4.13.23",
+    "cloudinary": "2.6.0",
+    "cors": "2.8.5",
+    "dotenv": "16.5.0",
+    "express": "5.1.0",
+    "mongoose": "8.13.2",
+    "multer": "^1.4.5-lts.2",
+    "svix": "^1.64.0"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "1.4.12",
+    "@types/node": "22.14.1",
+    "nodemon": "3.1.9",
+    "typescript": "5.8.3"
+  }
+}
