@@ -233,6 +233,11 @@ router.post(
   syncUser,
   async (req: Request, res: Response) => {
     try {
+      if (!req.auth?.userId) {
+        return res
+          .status(401)
+          .json({ msg: "Unauthorized: User not authenticated" });
+      }
       const blog = await Blog.findById(req.params.id);
       if (!blog) {
         return res.status(404).json({ msg: "Blog not found" });
