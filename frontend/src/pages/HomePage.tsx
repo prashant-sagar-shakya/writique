@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -8,371 +8,178 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  BookOpen,
-  Search,
-  SlidersHorizontal,
-  X,
-  Loader2,
-  Heart,
-} from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet"; // Removed unused SheetDescription, SheetClose
+import { Loader2, BookOpen, ChevronRight } from "lucide-react";
 import { categories, Blog } from "@/lib/blog-data";
 import { useToast } from "@/components/ui/use-toast";
-import { SignedIn } from "@clerk/clerk-react";
+import { SignedOut } from "@clerk/clerk-react";
+import { Badge } from "@/components/ui/badge";
 
-const BlogsPage = () => {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [allBlogs, setAllBlogs] = useState<Blog[]>([]);
+const HomePage = () => {
+  const [featuredBlogs, setFeaturedBlogs] = useState<Blog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isSheetOpen, setIsSheetOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState(
-    searchParams.get("search") || ""
-  );
-  const [selectedCategory, setSelectedCategory] = useState(
-    searchParams.get("category") || ""
-  );
-  const [sortBy, setSortBy] = useState(searchParams.get("sort") || "newest");
-  const [tempSelectedCategory, setTempSelectedCategory] =
-    useState(selectedCategory);
-  const [tempSortBy, setTempSortBy] = useState(sortBy);
   const { toast } = useToast();
-  const [filteredBlogs, setFilteredBlogs] = useState<Blog[]>([]);
-  const mapBlogData = (data: any[]): Blog[] =>
-    data.map((blog) => ({
+
+  // This mapping should include 'views' now as well, just like other pages
+  const mapBlogData = (data: any[]): Blog[] => {
+    if (!Array.isArray(data)) return [];
+    return data.map((blog) => ({
       ...blog,
       id: blog._id || blog.id,
       views: blog.views ?? 0,
     }));
-  const fetchBlogs = async () => {
+  };
+
+  const fetchFeaturedBlogs = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/blogs");
-      if (!response.ok) throw new Error(`${response.status}`);
-      const apiResponse = await response.json();
-      const mappedData = mapBlogData(apiResponse.blogs || []);
-      setAllBlogs(mappedData);
+      const response = await fetch("/api/blogs?limit=3");
+      if (!response.ok) throw new Error(`HTTP error! ${response.status}`);
+      const apiResponse = await response.json(); // apiResponse is { blogs: [], totalCount: num }
+
+      // --- Corrected line: Access .blogs ---
+      setFeaturedBlogs(mapBlogData(apiResponse.blogs || [])); // Access .blogs property here
     } catch (e: any) {
-      setError(e.message || "Failed.");
-      toast({ title: "Error", variant: "destructive" });
+      console.error("Fetch failed:", e);
+      const msg = e.message || "Failed.";
+      setError(msg);
+      toast({ title: "Error", description: msg, variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
   };
+
   useEffect(() => {
-    document.title = "Writique - Blogs";
-    fetchBlogs();
-    const urlS = searchParams.get("s") || "";
-    const urlC = searchParams.get("c") || "";
-    const urlO = searchParams.get("o") || "newest";
-    setSearchTerm(urlS);
-    setSelectedCategory(urlC);
-    setSortBy(urlO);
-    setTempSelectedCategory(urlC);
-    setTempSortBy(urlO);
+    document.title = "Writique - Home";
+    fetchFeaturedBlogs();
   }, []);
-  useEffect(() => {
-    const p = new URLSearchParams();
-    if (searchTerm) p.set("search", searchTerm);
-    else p.delete("search");
-    if (selectedCategory) p.set("category", selectedCategory);
-    else p.delete("category");
-    if (sortBy !== "newest") p.set("sort", sortBy);
-    else p.delete("sort");
-    setSearchParams(p, { replace: true });
-  }, [searchTerm, selectedCategory, sortBy, setSearchParams]);
-  useEffect(() => {
-    let r = [...allBlogs];
-    const sT = searchTerm.toLowerCase();
-    if (sT)
-      r = r.filter(
-        (b) =>
-          b.title.toLowerCase().includes(sT) ||
-          b.excerpt.toLowerCase().includes(sT)
-      );
-    if (selectedCategory) r = r.filter((b) => b.category === selectedCategory);
-    if (sortBy === "oldest")
-      r.sort(
-        (a, b) =>
-          new Date(a.createdAt || a.date).getTime() -
-          new Date(b.createdAt || b.date).getTime()
-      );
-    else
-      r.sort(
-        (a, b) =>
-          new Date(b.createdAt || b.date).getTime() -
-          new Date(a.createdAt || a.date).getTime()
-      );
-    setFilteredBlogs(r);
-  }, [searchTerm, selectedCategory, sortBy, allBlogs]);
-  const handleTempCategoryChange = (v: string) => {
-    setTempSelectedCategory(v === "all-cat-value" ? "" : v);
-  };
-  const handleTempSortChange = (v: string) => {
-    setTempSortBy(v);
-  };
-  const applyFilters = () => {
-    setSelectedCategory(tempSelectedCategory);
-    setSortBy(tempSortBy);
-    setIsSheetOpen(false);
-  };
-  const clearAllFilters = () => {
-    setSearchTerm("");
-    setSelectedCategory("");
-    setSortBy("newest");
-    setTempSelectedCategory("");
-    setTempSortBy("newest");
-  };
-  const clearCategoryFilter = () => {
-    setSelectedCategory("");
-  };
-  const clearSearchFilter = () => {
-    setSearchTerm("");
-  };
-  const handleSheetOpenChange = (o: boolean) => {
-    if (o) {
-      setTempSelectedCategory(selectedCategory);
-      setTempSortBy(sortBy);
-    }
-    setIsSheetOpen(o);
-  };
-  const handleFav = (id: string) => {
-    toast({ title: "Fav WIP" });
-  };
 
   return (
-    <div className="space-y-8 container mx-auto py-8 px-4">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold md:text-4xl">Explore Blogs</h1>
-          <p className="text-muted-foreground">
-            {selectedCategory ? `Browsing: ${selectedCategory}` : "All posts"}
-          </p>
-        </div>
-        <div className="flex gap-2 items-center">
-          <div className="relative flex-grow sm:w-64">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4" />
-            <Input
-              placeholder="Search..."
-              className="pl-8 w-full"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            {searchTerm && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={clearSearchFilter}
-              >
-                <X className="h-4 w-4" />
+    <div className="space-y-12 md:space-y-16 lg:space-y-20">
+      <section className="text-center space-y-6 py-10 md:py-16 lg:py-20">
+        <h1 className="text-4xl font-bold sm:text-5xl md:text-6xl">
+          Welcome to{" "}
+          <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+            Writique
+          </span>
+        </h1>
+        <p className="text-lg text-muted-foreground md:text-xl max-w-xl lg:max-w-2xl mx-auto">
+          Ideas resonate, stories connect.
+        </p>
+        <div className="flex flex-wrap justify-center gap-3 sm:gap-4">
+          <Link to="/blogs">
+            <Button size="lg">
+              Explore Blogs
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          </Link>
+          <SignedOut>
+            <Link to="/auth">
+              <Button size="lg" variant="outline">
+                Join
               </Button>
-            )}
+            </Link>
+          </SignedOut>
+        </div>
+      </section>
+      <section className="space-y-6 md:space-y-8">
+        <div className="flex flex-col items-center sm:flex-row sm:justify-between">
+          <div className="mb-4 sm:mb-0 text-center sm:text-left">
+            <h2 className="text-2xl font-bold md:text-3xl">Featured</h2>
+            <p className="text-muted-foreground">Recommendations</p>
           </div>
-          <Sheet open={isSheetOpen} onOpenChange={handleSheetOpenChange}>
-            <SheetTrigger asChild>
-              <Button variant="outline" size="icon" className="rel">
-                <SlidersHorizontal className="h-4 w-4" />
-                {(selectedCategory || sortBy !== "newest") && (
-                  <span className="abs -top-1 -right-1 flex h-3 w-3">
-                    <span className="animate-ping abs inset-0 rounded-full bg-primary op75"></span>
-                    <span className="rel inline-flex rounded-full h-3 w-3 bg-primary"></span>
-                  </span>
-                )}
-              </Button>
-            </SheetTrigger>
-            <SheetContent>
-              <SheetHeader>
-                <SheetTitle>Filter & Sort</SheetTitle>
-              </SheetHeader>
-              <div className="space-y-6 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="cat-sel">Category</Label>
-                  <Select
-                    inputId="cat-sel"
-                    value={tempSelectedCategory || "all-cat-value"}
-                    onValueChange={handleTempCategoryChange}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="All" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all-cat-value">All</SelectItem>
-                      {categories.map((c) => (
-                        <SelectItem key={c.id} value={c.name}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sort-sel">Sort</Label>
-                  <Select
-                    inputId="sort-sel"
-                    value={tempSortBy}
-                    onValueChange={handleTempSortChange}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="newest">Newest</SelectItem>
-                      <SelectItem value="oldest">Oldest</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button onClick={applyFilters} className="w-full">
-                  Apply
-                </Button>
-                {(tempSelectedCategory ||
-                  searchTerm ||
-                  tempSortBy !== "newest") && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      clearAllFilters();
-                      setIsSheetOpen(false);
-                    }}
-                    className="w-full"
-                  >
-                    Clear
-                  </Button>
-                )}
-              </div>
-            </SheetContent>
-          </Sheet>
+          <Link to="/blogs">
+            <Button variant="ghost" className="gap-1 text-sm">
+              View All <ChevronRight className="h-4 w-4" />
+            </Button>
+          </Link>
         </div>
-      </div>
-      {(selectedCategory || searchTerm || sortBy !== "newest") && (
-        <div className="flex items-center gap-2 flex-wrap text-sm">
-          <span className="text-muted-foreground">Active:</span>
-          {selectedCategory && (
-            <Badge variant="secondary">
-              {selectedCategory}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-4 w-4 ml-1 p-0"
-                onClick={clearCategoryFilter}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </Badge>
-          )}
-          {searchTerm && (
-            <Badge variant="secondary">
-              "{searchTerm}"
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-4 w-4 ml-1 p-0"
-                onClick={clearSearchFilter}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </Badge>
-          )}
-          {sortBy !== "newest" && (
-            <Badge variant="secondary">
-              {sortBy === "oldest" ? "Oldest" : "Newest"}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-4 w-4 ml-1 p-0"
-                onClick={() => setSortBy("newest")}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </Badge>
-          )}
-          <Button
-            variant="link"
-            size="sm"
-            className="h-auto p-0 text-xs"
-            onClick={clearAllFilters}
-          >
-            Clear All
-          </Button>
-        </div>
-      )}
-
-      {isLoading ? (
-        <div className="flex justify-center py-20">
-          <Loader2 className="h-10 w-10 animate-spin" />
-        </div>
-      ) : error ? (
-        <div className="text-center py-16 border rounded">
-          <h2 className="text-xl">Error</h2>
-          <p>{error}</p>
-          <Button onClick={fetchBlogs}>Retry</Button>
-        </div>
-      ) : filteredBlogs.length === 0 ? (
-        <div className="text-center py-16">
-          <h2 className="text-2xl">No blogs</h2>
-          <p>Try different filters.</p>
-          <Button onClick={clearAllFilters}>Clear</Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredBlogs.map((blog) => (
-            <Link to={`/blogs/${blog.id}`} key={blog.id} className="group">
-              {/* Applying the EXACT Card Layout you provided */}
-              <Card className="overflow-hidden h-full flex flex-col transition-shadow hover:shadow-lg">
-                <div className="aspect-[16/9] relative overflow-hidden border-b">
-                  <img
-                    src={blog.imageUrl}
-                    alt={blog.title}
-                    className="object-cover w-full h-full group-hover:scale-105 transition-transform"
-                  />
-                  <Badge variant="secondary" className="absolute top-2 right-2">
-                    {blog.category}
-                  </Badge>
-                  {/* Optional: Keep favorite button from original if needed */}
-                  {/* <SignedIn><Button variant="ghost" size="icon" className="absolute top-2 left-2 ..." onClick={(e)=>{e.preventDefault();handleFav(blog.id);}}><Heart className="h-4 w-4"/></Button></SignedIn> */}
-                </div>
-                <CardHeader className="p-4 pb-2">
-                  <CardTitle className="text-lg font-semibold line-clamp-2 group-hover:text-primary">
-                    {blog.title}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 pt-0 flex-grow">
-                  <p className="line-clamp-3 text-sm text-muted-foreground">
-                    {blog.excerpt}
-                  </p>
-                  {/* Removed Read More button to exactly match provided layout */}
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </div>
+        ) : error ? (
+          <div className="text-center py-12 text-destructive">
+            <h3 className="text-xl">Error</h3>
+            <p>{error}</p>
+          </div>
+        ) : featuredBlogs.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {featuredBlogs.map((blog) => (
+              <Link to={`/blogs/${blog.id}`} key={blog.id} className="group">
+                <Card className="h-[75%] flex flex-col shadow hover:shadow-lg">
+                  <div className="rel overflow-hidden border-b">
+                    <img
+                      src={blog.imageUrl}
+                      alt={blog.title}
+                      className="obj-cover w-full h-full group-hover:scale-105 tr-transform"
+                    />
+                    <Badge variant="secondary" className="abs top-2 right-2">
+                      {blog.category}
+                    </Badge>
+                  </div>
+                  <CardHeader className="p-4 pb-2">
+                    <CardTitle className="text-lg font-semibold lc-2 group-hover:text-primary">
+                      {blog.title}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0 grow">
+                    <p className="lc-3 text-sm text-muted-foreground">
+                      {blog.excerpt}
+                    </p>
+                  </CardContent>
+                  <CardFooter className="p-4 pt-2 text-xs flex justify-between mt-auto">
+                    <time>{new Date(blog.date).toLocaleDateString()}</time>
+                    <span className="flex items-center gap-1">
+                      <BookOpen className="h-3 w-3" />
+                      {blog.readTime} | {blog.views ?? 0} views
+                    </span>
+                  </CardFooter>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <p className="text-center py-12 text-muted-foreground">
+            No featured posts.
+          </p>
+        )}
+      </section>
+      <section className="space-y-6 md:space-y-8">
+        <h2 className="text-2xl font-bold md:text-3xl text-center">
+          Categories
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+          {categories.map((c) => (
+            <Link to={`/blogs?category=${c.name}`} key={c.id} className="group">
+              <Card className="text-center hover:shadow-md">
+                <CardContent className="p-3 py-5 sm:p-4 flex flex-col items-center justify-center gap-1.5 sm:gap-2 aspect-square">
+                  <c.icon className="h-5 w-5 sm:h-6 sm:w-6 text-muted-foreground group-hover:text-primary" />
+                  <h3 className="font-medium text-xs sm:text-sm text-center text-muted-foreground group-hover:text-primary">
+                    {c.name}
+                  </h3>
                 </CardContent>
-                <CardFooter className="p-4 pt-2 text-xs text-muted-foreground flex justify-between mt-auto">
-                  <span>{new Date(blog.date).toLocaleDateString()}</span>
-                  <span className="flex items-center gap-1">
-                    <BookOpen className="h-3 w-3" />
-                    {blog.readTime} | {blog.views ?? 0} views
-                  </span>
-                </CardFooter>
               </Card>
             </Link>
           ))}
         </div>
-      )}
+      </section>
+      <SignedOut>
+        <section className="bg-gradient-to-r from-primary to-secondary rounded-lg p-8 text-primary-foreground text-center space-y-4 md:space-y-6">
+          <h2 className="text-2xl font-bold md:text-3xl">Join Today</h2>
+          <p>Save favorites, join community.</p>
+          <Link to="/auth">
+            <Button
+              variant="secondary"
+              className="bg-background text-primary hover:bg-background/90"
+            >
+              Get Started
+            </Button>
+          </Link>
+        </section>
+      </SignedOut>
     </div>
   );
 };
-export default BlogsPage;
+export default HomePage;
