@@ -7,7 +7,8 @@ import {
   requireAuthManual,
   syncUser,
   isAdmin,
-} from "../middleware/authMiddleware";
+} from "../middleware/authMiddleware"; // Use the manual auth
+import mongoose from "mongoose";
 
 const router = express.Router();
 const storage = multer.memoryStorage();
@@ -16,66 +17,117 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
+const calculateReadTime = (content: string): string => {
+  try {
+    if (!content || typeof content !== "string" || content.trim().length === 0)
+      return "1 min read";
+    const wpm = 200;
+    const wc = content.trim().split(/\s+/).filter(Boolean).length;
+    const min = Math.ceil(wc / wpm);
+    return `${min} min read`;
+  } catch {
+    return "1 min read";
+  }
+};
 const uploadToCloudinary = (
   fileBuffer: Buffer,
   originalName: string
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
-    const public_id = path.parse(originalName).name;
-    const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "writique_blogs", public_id: public_id, resource_type: "auto" },
-      (error, result) => {
-        if (error) return reject(error);
-        if (!result) return reject(new Error("Cloudinary upload failed."));
-        resolve(result.secure_url);
+    const pId = path.parse(originalName).name;
+    const uS = cloudinary.uploader.upload_stream(
+      { folder: "writique_blogs", public_id: pId, resource_type: "auto" },
+      (e, r) => {
+        if (e) return reject(e);
+        if (!r) return reject(new Error("Cloudinary failed."));
+        resolve(r.secure_url);
       }
     );
-    uploadStream.end(fileBuffer);
+    uS.end(fileBuffer);
   });
 };
 
-router.get("/", async (req: Request, res: Response) => {
+// --- Public GET Routes ---
+router.get("/", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 0;
-    let query = Blog.find().sort({ createdAt: -1 });
-    if (limit > 0) {
-      query = query.limit(limit);
-    }
+    const authorId = req.query.authorId as string;
+    let filter: any = {};
+    if (authorId) filter.authorClerkId = authorId;
+    let query = Blog.find(filter).sort({ createdAt: -1 });
+    if (limit > 0) query = query.limit(limit);
     const blogs = await query.exec();
-    res.json(blogs);
+    const totalCount = await Blog.countDocuments(filter);
+    res.json({ blogs: blogs, totalCount: totalCount });
   } catch (err: any) {
-    console.error(err.message);
+    console.error("GET /blogs ERR:", err);
     res.status(500).send("Server Error");
   }
 });
-
-router.get("/:id", async (req: Request, res: Response) => {
+router.get("/:id", async (req, res) => {
   try {
-    const blog = await Blog.findById(req.params.id);
+    const blogId = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(blogId)) {
+      return res.status(400).json({ msg: "Invalid ID" });
+    }
+    const blog = await Blog.findById(blogId);
     if (!blog) {
-      return res.status(404).json({ msg: "Blog not found" });
+      return res.status(404).json({ msg: "Not found" });
     }
     res.json(blog);
   } catch (err: any) {
-    console.error(err.message);
-    if (err.kind === "ObjectId") {
-      return res.status(404).json({ msg: "Blog not found" });
-    }
+    console.error(`GET /blogs/${req.params.id} ERR:`, err);
     res.status(500).send("Server Error");
   }
 });
 
+// --- POST Increment Views (Requires Authentication) ---
+// Using POST method as in user's provided code
+// Protected by requireAuthManual and syncUser
+router.post(
+  "/:id/increment-views",
+  requireAuthManual,
+  syncUser,
+  async (req: Request, res: Response) => {
+    const blogId = req.params.id;
+    // Middleware already verified user, req.auth.userId exists
+    console.log(
+      `Increment view requested by User ${req.auth?.userId} for Blog ${blogId}`
+    );
+    try {
+      if (!mongoose.Types.ObjectId.isValid(blogId))
+        return res.status(400).json({ msg: "Invalid ID" });
+      const blog = await Blog.findByIdAndUpdate(
+        blogId,
+        { $inc: { views: 1 } },
+        { new: true }
+      );
+      if (!blog)
+        return res
+          .status(404)
+          .json({ msg: "Blog not found for view increment" });
+      console.log(
+        `View count incremented for blog: ${blogId}, New count: ${blog.views}`
+      );
+      res.json({ success: true, views: blog.views });
+    } catch (err: any) {
+      console.error(`POST /blogs/${blogId}/increment-views ERR:`, err);
+      res.status(500).send("Server Error");
+    }
+  }
+);
+
+// --- Protected POST Blog ---
 router.post(
   "/",
   requireAuthManual,
   syncUser,
   upload.single("imageFile"),
-  async (req: Request, res: Response) => {
-    const {
+  async (req, res) => {
+    /* ...unchanged... */ const {
       title,
       excerpt,
       date,
-      readTime,
       category,
       content,
       imageUrl: manualImageUrl,
@@ -84,51 +136,56 @@ router.post(
     const localUser = req.user;
     if (!clerkUserId || !localUser)
       return res.status(401).json({ message: "Auth failed." });
-    let blogImageUrl =
-      manualImageUrl ||
-      "https://images.unsplash.com/photo-1674027444485-cec3da58eef4?q=80&w=1932&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D";
+    let finalImageUrl = manualImageUrl || "DEFAULT_IMG_URL";
     try {
       if (req.file)
-        blogImageUrl = await uploadToCloudinary(
+        finalImageUrl = await uploadToCloudinary(
           req.file.buffer,
           req.file.originalname
         );
-      const newBlog = new Blog({
+      else if (!finalImageUrl) finalImageUrl = "DEFAULT_IMG_URL";
+      const calcReadTime = calculateReadTime(content);
+      const authorInfo = {
+        name:
+          `${localUser.firstName || ""} ${localUser.lastName || ""}`.trim() ||
+          localUser.email,
+        avatar: localUser.imageUrl || "DEFAULT_AVATAR",
+      };
+      const dataToSave = {
         title,
         excerpt,
-        date,
-        readTime,
         category,
         content,
-        imageUrl: blogImageUrl,
-        author: {
-          name:
-            `${localUser.firstName || ""} ${localUser.lastName || ""}`.trim() ||
-            localUser.email,
-          avatar: localUser.imageUrl || "https://i.pravatar.cc/150?img=1",
-        },
+        imageUrl: finalImageUrl,
+        date: date || new Date().toISOString().split("T")[0],
+        readTime: calcReadTime,
+        author: authorInfo,
         authorClerkId: clerkUserId,
-      });
+        views: 0,
+      };
+      const newBlog = new Blog(dataToSave);
       const savedBlog = await newBlog.save();
       res.status(201).json(savedBlog);
     } catch (err: any) {
       console.error("POST ERR:", err);
-      if (err.message?.includes("size"))
-        return res.status(413).json({ msg: "Image > 10MB limit." });
+      if (err instanceof mongoose.Error.ValidationError)
+        return res.status(400).json({ m: "Validation Failed", e: err.errors });
+      if (err.message?.includes("size")) return res.status(413);
       if (err.http_code === 401)
-        return res.status(500).json({ msg: "Cloudinary config error." });
-      res.status(500).send("Server Error creating blog.");
+        return res.status(500).json({ m: "Cloudinary err" });
+      res.status(500).send("Server Error");
     }
   }
 );
 
+// --- Protected PUT Blog ---
 router.put(
   "/:id",
   requireAuthManual,
   syncUser,
   upload.single("imageFile"),
-  async (req: Request, res: Response) => {
-    const {
+  async (req, res) => {
+    /* ...unchanged... */ const {
       title,
       excerpt,
       category,
@@ -141,10 +198,12 @@ router.put(
     let updateData: any = { title, excerpt, category, content };
     let newImageUrl = manualImageUrl;
     try {
+      if (!mongoose.Types.ObjectId.isValid(blogId))
+        return res.status(400).json({ msg: "Invalid ID" });
       const blog = await Blog.findById(blogId);
-      if (!blog) return res.status(404).json({ msg: "Blog not found" });
+      if (!blog) return res.status(404).json({ msg: "Not found" });
       if (!isAdminUser && blog.authorClerkId !== clerkUserId)
-        return res.status(403).json({ msg: "User not authorized" });
+        return res.status(403).json({ msg: "Not authorized" });
       if (req.file) {
         newImageUrl = await uploadToCloudinary(
           req.file.buffer,
@@ -156,100 +215,50 @@ router.put(
         manualImageUrl !== blog.imageUrl
       ) {
         updateData.imageUrl = manualImageUrl;
+      } else {
+        delete updateData.imageUrl;
+      }
+      if (updateData.content && updateData.content !== blog.content) {
+        updateData.readTime = calculateReadTime(updateData.content);
+      } else {
+        delete updateData.readTime;
       }
       const updatedBlog = await Blog.findByIdAndUpdate(
         blogId,
         { $set: updateData },
-        { new: true }
+        { new: true, runValidators: true }
       );
       if (!updatedBlog) return res.status(404).json({ msg: "Update failed" });
       res.json(updatedBlog);
     } catch (err: any) {
-      console.error(`PUT ERR /api/blogs/${blogId}:`, err);
-      if (err.message?.includes("size"))
-        return res.status(413).json({ msg: "Image > 10MB limit." });
-      if (err.http_code === 401)
-        return res.status(500).json({ msg: "Cloudinary error." });
-      res.status(500).send("Server Error updating.");
-    }
-  }
-);
-
-// Removed isAdmin middleware, logic moved inside
-router.delete(
-  "/:id",
-  requireAuthManual,
-  syncUser,
-  async (req: Request, res: Response) => {
-    const blogId = req.params.id;
-    const requestingUserId = req.auth?.userId;
-    const isRequestingUserAdmin = req.user?.role === "admin";
-
-    try {
-      const blog = await Blog.findById(blogId);
-      if (!blog) {
-        return res.status(404).json({ msg: "Blog not found" });
-      }
-
-      // Authorization check: Admin OR Author of the blog
-      if (!isRequestingUserAdmin && blog.authorClerkId !== requestingUserId) {
-        return res
-          .status(403)
-          .json({ msg: "Forbidden: You can only delete your own blogs." });
-      }
-
-      await blog.deleteOne();
-      res.json({
-        msg: `Blog removed successfully by ${
-          isRequestingUserAdmin ? "admin" : "owner"
-        }`,
-      });
-    } catch (err: any) {
-      console.error(`DELETE ERR ${blogId}:`, err);
-      if (err.kind === "ObjectId") {
-        return res.status(404).json({ msg: "Blog not found" });
-      }
-      res.status(500).send("Server Error deleting blog.");
-    }
-  }
-);
-
-router.get("/:id/views", async (req: Request, res: Response) => {
-  try {
-    const blog = await Blog.findById(req.params.id);
-    if (!blog) {
-      return res.status(404).json({ msg: "Blog not found" });
-    }
-    res.json({ count: blog.views });
-  } catch (err: any) {
-    console.error(err.message);
-    res.status(500).send("Server Error");
-  }
-});
-
-router.post(
-  "/:id/increment-views",
-  requireAuthManual,
-  syncUser,
-  async (req: Request, res: Response) => {
-    try {
-      if (!req.auth?.userId) {
-        return res
-          .status(401)
-          .json({ msg: "Unauthorized: User not authenticated" });
-      }
-      const blog = await Blog.findById(req.params.id);
-      if (!blog) {
-        return res.status(404).json({ msg: "Blog not found" });
-      }
-      blog.views += 1;
-      await blog.save();
-      res.json({ success: true, views: blog.views });
-    } catch (err: any) {
-      console.error(err.message);
+      console.error(`PUT ERR ${blogId}:`, err);
+      if (err instanceof mongoose.Error.ValidationError)
+        return res.status(400).json({ m: "Validation Failed", e: err.errors });
       res.status(500).send("Server Error");
     }
   }
 );
+
+// --- Protected DELETE Blog ---
+router.delete("/:id", requireAuthManual, syncUser, async (req, res) => {
+  /* ...unchanged... */ const blogId = req.params.id;
+  const requestingUserId = req.auth?.userId;
+  const isRequestingUserAdmin = req.user?.role === "admin";
+  try {
+    if (!mongoose.Types.ObjectId.isValid(blogId))
+      return res.status(400).json({ msg: "Invalid ID" });
+    const blog = await Blog.findById(blogId);
+    if (!blog) return res.status(404).json({ msg: "Not found" });
+    if (!isRequestingUserAdmin && blog.authorClerkId !== requestingUserId)
+      return res.status(403).json({ msg: "Forbidden." });
+    await blog.deleteOne();
+    res.json({
+      msg: `Removed by ${isRequestingUserAdmin ? "admin" : "owner"}`,
+    });
+  } catch (err: any) {
+    console.error(`DEL ERR ${blogId}:`, err);
+    res.status(500).send("Server Error");
+  }
+});
 
 export default router;

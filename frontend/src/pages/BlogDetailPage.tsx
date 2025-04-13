@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import { useAuth } from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, ChevronLeft, Heart, Share2, Loader2 } from "lucide-react";
+import {
+  BookOpen,
+  ChevronLeft,
+  Heart,
+  Share2,
+  Loader2,
+  Eye,
+  AlertTriangle,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { SignedIn } from "@clerk/clerk-react";
@@ -11,71 +20,93 @@ import { useToast } from "@/components/ui/use-toast";
 import { Blog } from "@/lib/blog-data";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism"; // Keep or choose another theme
+import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 const BlogDetailPage = () => {
   const { blogId } = useParams<{ blogId: string }>();
+  const { getToken, isSignedIn } = useAuth();
   const [blog, setBlog] = useState<Blog | null>(null);
   const [relatedBlogs, setRelatedBlogs] = useState<Blog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLiked, setIsLiked] = useState(false);
+  const [viewCount, setViewCount] = useState<number | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
   const mapBlogData = (data: any[]): Blog[] =>
-    data.map((blog) => ({ ...blog, id: blog._id || blog.id }));
+    data.map((b) => ({ ...b, id: b._id || b.id, views: b.views ?? 0 }));
+
   useEffect(() => {
+    let isMounted = true;
+    const incrementView = async () => {
+      if (!blogId || !isSignedIn) return;
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const response = await fetch(`/api/blogs/${blogId}/increment-views`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (isMounted && data.views !== undefined) setViewCount(data.views);
+        } else {
+          console.warn(`View count failed: ${response.status}`);
+        }
+      } catch (err) {
+        console.warn("View count fetch failed:", err);
+      }
+    };
     const fetchBlogAndRelated = async () => {
       if (!blogId) return;
       setIsLoading(true);
       setError(null);
       setBlog(null);
       setRelatedBlogs([]);
+      setViewCount(null);
       try {
-        // First increment views
-        await fetch(`/api/blogs/${blogId}/increment-views`, {
-          method: "POST",
-        });
-
         const response = await fetch(`/api/blogs/${blogId}`);
+        if (!isMounted) return;
         if (response.status === 404) throw new Error("Not found");
         if (!response.ok) throw new Error(`${response.status}`);
         const fetchedBlogData: Blog = await response.json();
-        const formattedBlog = {
-          ...fetchedBlogData,
-          id: (fetchedBlogData as any)._id || fetchedBlogData.id,
-        };
+        const formattedBlog = mapBlogData([fetchedBlogData])[0];
+        if (!isMounted) return;
         setBlog(formattedBlog);
+        setViewCount(formattedBlog.views ?? 0);
         document.title = `W - ${formattedBlog.title}`;
         const allBlogsResponse = await fetch("/api/blogs");
-        if (!allBlogsResponse.ok) console.warn("Related fetch failed");
+        if (!allBlogsResponse.ok) console.warn("Related failed");
         const allBlogsData = await allBlogsResponse.json();
-        const related = mapBlogData(allBlogsData)
+        if (!isMounted) return;
+        const related = mapBlogData(allBlogsData.blogs || [])
           .filter(
             (b) =>
               b.category === formattedBlog.category && b.id !== formattedBlog.id
           )
           .slice(0, 3);
         setRelatedBlogs(related);
-        window.scrollTo(0, 0);
+        if (isSignedIn && isMounted) incrementView(); // Call view increment if logged in
       } catch (e: any) {
-        setError(e.message || "Failed.");
-        document.title = "W - Error";
-        if (e.message !== "Not found") {
-          toast({ title: "Error", variant: "destructive" });
+        if (isMounted) {
+          setError(e.message || "Failed.");
+          document.title = "W - Error";
+          if (e.message !== "Not found")
+            toast({ title: "Error", variant: "destructive" });
         }
       } finally {
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
       }
     };
     fetchBlogAndRelated();
-  }, [blogId, toast]);
+    return () => {
+      isMounted = false;
+    };
+  }, [blogId, toast, isSignedIn, getToken]);
+
   const toggleLike = () => {
     setIsLiked(!isLiked);
-    toast({
-      title: isLiked ? "Removed" : "Added",
-      description: `"${blog?.title}" ${isLiked ? "rem" : "add"} favs.`,
-    });
+    toast({ title: isLiked ? "Removed" : "Added" });
   };
   const handleShare = () => {
     if (!blog) return;
@@ -89,22 +120,22 @@ const BlogDetailPage = () => {
         .catch(console.log);
     } else {
       navigator.clipboard.writeText(window.location.href);
-      toast({ title: "Link Copied!" });
+      toast({ title: "Copied!" });
     }
   };
 
   if (isLoading)
     return (
-      <div className="flex justify-center items-center py-20">
+      <div className="flex justify-center py-20">
         <Loader2 className="h-10 w-10 animate-spin" />
       </div>
     );
   if (error === "Not found" || !blog)
     return (
       <div className="text-center py-16">
-        <h1 className="text-2xl font-bold">Not Found</h1>
+        <h1 className="text-2xl">Not Found</h1>
         <p>Blog removed?</p>
-        <Button variant="outline" onClick={() => navigate("/blogs")}>
+        <Button onClick={() => navigate("/blogs")}>
           <ChevronLeft />
           Back
         </Button>
@@ -133,13 +164,13 @@ const BlogDetailPage = () => {
       <article className="space-y-6">
         <header className="space-y-3 border-b pb-6">
           <Badge variant="secondary">{blog.category}</Badge>
-          <h1 className="text-3xl font-bold leading-tight sm:text-4xl md:text-5xl">
+          <h1 className="text-3xl font-bold sm:text-4xl md:text-5xl">
             {blog.title}
           </h1>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <Avatar className="h-7 w-7">
-                <AvatarImage src={blog.author.avatar} alt={blog.author.name} />
+                <AvatarImage src={blog.author.avatar} />
                 <AvatarFallback>{blog.author.name[0]}</AvatarFallback>
               </Avatar>
               <span>{blog.author.name}</span>
@@ -157,6 +188,15 @@ const BlogDetailPage = () => {
               <BookOpen className="h-4 w-4" />
               {blog.readTime}
             </span>
+            {viewCount !== null && (
+              <>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <Eye className="h-4 w-4" />
+                  {viewCount} views
+                </span>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2 pt-2">
             <SignedIn>
@@ -184,11 +224,11 @@ const BlogDetailPage = () => {
           </div>
         </header>
         {blog.imageUrl && (
-          <div className="aspect-video relative my-6 rounded-lg overflow-hidden border">
+          <div className="aspect-video rel my-6 rounded-lg ovf-hidden border">
             <img
               src={blog.imageUrl}
               alt={blog.title}
-              className="object-cover w-full h-full"
+              className="obj-cover w-full h-full"
             />
           </div>
         )}
@@ -221,31 +261,25 @@ const BlogDetailPage = () => {
       <Separator />
       {relatedBlogs.length > 0 && (
         <section className="space-y-6">
-          <h2 className="text-2xl font-bold">Related Blogs</h2>
+          <h2 className="text-2xl font-bold">Related</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {relatedBlogs.map((relatedBlog) => (
-              <Link
-                to={`/blogs/${relatedBlog.id}`}
-                key={relatedBlog.id}
-                className="group"
-              >
-                <Card className="overflow-hidden h-full transition-shadow hover:shadow-md">
-                  <div className="aspect-[16/10] overflow-hidden border-b">
+            {relatedBlogs.map((rb) => (
+              <Link to={`/blogs/${rb.id}`} key={rb.id} className="group">
+                <Card className="h-full shadow hover:shadow-md">
+                  <div className="aspect-[16/10] ovf-hidden border-b">
                     <img
-                      src={relatedBlog.imageUrl}
-                      alt={relatedBlog.title}
-                      className="object-cover w-full h-full transition-transform group-hover:scale-105"
+                      src={rb.imageUrl}
+                      alt={rb.title}
+                      className="obj-cover w-full h-full group-hover:scale-105 tr-transform"
                     />
                   </div>
                   <CardContent className="p-4">
-                    <h3 className="font-semibold line-clamp-2 group-hover:text-primary">
-                      {relatedBlog.title}
+                    <h3 className="font-semibold lc-2 group-hover:text-primary">
+                      {rb.title}
                     </h3>
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                      {relatedBlog.excerpt}
-                    </p>
-                    <div className="text-xs text-muted-foreground mt-2">
-                      {new Date(relatedBlog.date).toLocaleDateString()}
+                    <p className="text-xs mt-1 lc-2">{rb.excerpt}</p>
+                    <div className="text-xs mt-2">
+                      {new Date(rb.date).toLocaleDateString()}
                     </div>
                   </CardContent>
                 </Card>
