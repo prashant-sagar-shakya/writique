@@ -227,19 +227,24 @@ router.get("/:id/views", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/:id/increment-views", async (req: Request, res: Response) => {
-  try {
-    const blog = await Blog.findById(req.params.id);
-    if (!blog) {
-      return res.status(404).json({ msg: "Blog not found" });
+router.post(
+  "/:id/increment-views",
+  requireAuthManual,
+  syncUser,
+  async (req: Request, res: Response) => {
+    try {
+      const blog = await Blog.findById(req.params.id);
+      if (!blog) {
+        return res.status(404).json({ msg: "Blog not found" });
+      }
+      blog.views += 1;
+      await blog.save();
+      res.json({ success: true, views: blog.views });
+    } catch (err: any) {
+      console.error(err.message);
+      res.status(500).send("Server Error");
     }
-    blog.views += 1;
-    await blog.save();
-    res.json({ success: true, views: blog.views });
-  } catch (err: any) {
-    console.error(err.message);
-    res.status(500).send("Server Error");
   }
-});
+);
 
 export default router;

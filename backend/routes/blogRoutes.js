@@ -186,7 +186,7 @@ router.get("/:id/views", (req, res) => __awaiter(void 0, void 0, void 0, functio
         res.status(500).send("Server Error");
     }
 }));
-router.post("/:id/increment-views", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.post("/:id/increment-views", authMiddleware_1.requireAuthManual, authMiddleware_1.syncUser, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const blog = yield Blog_1.default.findById(req.params.id);
         if (!blog) {
