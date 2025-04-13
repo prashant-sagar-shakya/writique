@@ -17,7 +17,7 @@ const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const Blog_1 = __importDefault(require("../models/Blog"));
 const path_1 = __importDefault(require("path"));
-const authMiddleware_1 = require("../middleware/authMiddleware"); // Use the manual auth
+const authMiddleware_1 = require("../middleware/authMiddleware");
 const mongoose_1 = __importDefault(require("mongoose"));
 const router = express_1.default.Router();
 const storage = multer_1.default.memoryStorage();
@@ -51,7 +51,6 @@ const uploadToCloudinary = (fileBuffer, originalName) => {
         uS.end(fileBuffer);
     });
 };
-// --- Public GET Routes ---
 router.get("/", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const limit = parseInt(req.query.limit) || 0;
@@ -88,39 +87,33 @@ router.get("/:id", (req, res) => __awaiter(void 0, void 0, void 0, function* () 
         res.status(500).send("Server Error");
     }
 }));
-// --- POST Increment Views (Requires Authentication) ---
-// Using POST method as in user's provided code
-// Protected by requireAuthManual and syncUser
 router.post("/:id/increment-views", authMiddleware_1.requireAuthManual, authMiddleware_1.syncUser, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const blogId = req.params.id;
-    // Middleware already verified user, req.auth.userId exists
-    console.log(`Increment view requested by User ${(_a = req.auth) === null || _a === void 0 ? void 0 : _a.userId} for Blog ${blogId}`);
+    console.log(`Inc view User ${(_a = req.auth) === null || _a === void 0 ? void 0 : _a.userId} for Blog ${blogId}`);
     try {
         if (!mongoose_1.default.Types.ObjectId.isValid(blogId))
             return res.status(400).json({ msg: "Invalid ID" });
         const blog = yield Blog_1.default.findByIdAndUpdate(blogId, { $inc: { views: 1 } }, { new: true });
         if (!blog)
-            return res
-                .status(404)
-                .json({ msg: "Blog not found for view increment" });
-        console.log(`View count incremented for blog: ${blogId}, New count: ${blog.views}`);
+            return res.status(404).json({ msg: "Not found for view inc" });
+        console.log(`View Inc OK ${blogId}, New: ${blog.views}`);
         res.json({ success: true, views: blog.views });
     }
     catch (err) {
-        console.error(`POST /blogs/${blogId}/increment-views ERR:`, err);
+        console.error(`POST /inc-views ERR:`, err);
         res.status(500).send("Server Error");
     }
 }));
-// --- Protected POST Blog ---
 router.post("/", authMiddleware_1.requireAuthManual, authMiddleware_1.syncUser, upload.single("imageFile"), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b;
-    /* ...unchanged... */ const { title, excerpt, date, category, content, imageUrl: manualImageUrl, } = req.body;
+    const { title, excerpt, date, category, content, imageUrl: manualImageUrl, } = req.body;
     const clerkUserId = (_a = req.auth) === null || _a === void 0 ? void 0 : _a.userId;
     const localUser = req.user;
     if (!clerkUserId || !localUser)
-        return res.status(401).json({ message: "Auth failed." });
-    let finalImageUrl = manualImageUrl || "DEFAULT_IMG_URL";
+        return res.status(401).json({ m: "Auth failed." });
+    let finalImageUrl = manualImageUrl ||
+        "https://images.unsplash.com/photo-1674027444485-cec3da58eef4?q=80&w=1932&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D";
     try {
         if (req.file)
             finalImageUrl = yield uploadToCloudinary(req.file.buffer, req.file.originalname);
@@ -153,16 +146,15 @@ router.post("/", authMiddleware_1.requireAuthManual, authMiddleware_1.syncUser, 
         if (err instanceof mongoose_1.default.Error.ValidationError)
             return res.status(400).json({ m: "Validation Failed", e: err.errors });
         if ((_b = err.message) === null || _b === void 0 ? void 0 : _b.includes("size"))
-            return res.status(413);
+            return res.status(413).json({ m: "Img > 10MB" });
         if (err.http_code === 401)
             return res.status(500).json({ m: "Cloudinary err" });
         res.status(500).send("Server Error");
     }
 }));
-// --- Protected PUT Blog ---
 router.put("/:id", authMiddleware_1.requireAuthManual, authMiddleware_1.syncUser, upload.single("imageFile"), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b;
-    /* ...unchanged... */ const { title, excerpt, category, content, imageUrl: manualImageUrl, } = req.body;
+    const { title, excerpt, category, content, imageUrl: manualImageUrl, } = req.body;
     const blogId = req.params.id;
     const clerkUserId = (_a = req.auth) === null || _a === void 0 ? void 0 : _a.userId;
     const isAdminUser = ((_b = req.user) === null || _b === void 0 ? void 0 : _b.role) === "admin";
@@ -205,10 +197,9 @@ router.put("/:id", authMiddleware_1.requireAuthManual, authMiddleware_1.syncUser
         res.status(500).send("Server Error");
     }
 }));
-// --- Protected DELETE Blog ---
 router.delete("/:id", authMiddleware_1.requireAuthManual, authMiddleware_1.syncUser, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b;
-    /* ...unchanged... */ const blogId = req.params.id;
+    const blogId = req.params.id;
     const requestingUserId = (_a = req.auth) === null || _a === void 0 ? void 0 : _a.userId;
     const isRequestingUserAdmin = ((_b = req.user) === null || _b === void 0 ? void 0 : _b.role) === "admin";
     try {

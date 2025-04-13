@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-const mongoose_1 = __importStar(require("mongoose"));
+const mongoose_1 = __importStar(require("mongoose")); // Import Types
 const UserSchema = new mongoose_1.Schema({
     clerkId: { type: String, required: true, unique: true, index: true },
     email: { type: String, required: true, unique: true },
@@ -41,5 +41,6 @@ const UserSchema = new mongoose_1.Schema({
     lastName: { type: String },
     imageUrl: { type: String },
     role: { type: String, enum: ["admin", "user"], default: "user" },
+    favorites: [{ type: mongoose_1.Schema.Types.ObjectId, ref: "Blog" }], // <<<--- Add this line
 }, { timestamps: true });
 exports.default = mongoose_1.default.model("User", UserSchema);

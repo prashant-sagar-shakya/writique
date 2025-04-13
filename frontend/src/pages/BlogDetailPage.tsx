@@ -17,7 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { SignedIn } from "@clerk/clerk-react";
 import { useToast } from "@/components/ui/use-toast";
-import { Blog } from "@/lib/blog-data";
+import { Blog, UserProfile } from "@/lib/blog-data";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -30,6 +30,7 @@ const BlogDetailPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLiked, setIsLiked] = useState(false);
+  const [isLikeLoading, setIsLikeLoading] = useState(false);
   const [viewCount, setViewCount] = useState<number | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -57,24 +58,45 @@ const BlogDetailPage = () => {
         console.warn("View count fetch failed:", err);
       }
     };
-    const fetchBlogAndRelated = async () => {
+    const fetchAllData = async () => {
       if (!blogId) return;
       setIsLoading(true);
       setError(null);
       setBlog(null);
       setRelatedBlogs([]);
       setViewCount(null);
+      setIsLiked(false);
       try {
-        const response = await fetch(`/api/blogs/${blogId}`);
+        const token = await getToken();
+        const blogFetch = fetch(`/api/blogs/${blogId}`);
+        const userFetch =
+          isSignedIn && token
+            ? fetch("/api/users/me", {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+            : Promise.resolve(null);
+        const [blogResponse, userResponse] = await Promise.all([
+          blogFetch,
+          userFetch,
+        ]);
         if (!isMounted) return;
-        if (response.status === 404) throw new Error("Not found");
-        if (!response.ok) throw new Error(`${response.status}`);
-        const fetchedBlogData: Blog = await response.json();
+        if (blogResponse.status === 404) throw new Error("Not found");
+        if (!blogResponse.ok) throw new Error(`${blogResponse.status}`);
+        const fetchedBlogData: Blog = await blogResponse.json();
         const formattedBlog = mapBlogData([fetchedBlogData])[0];
         if (!isMounted) return;
         setBlog(formattedBlog);
         setViewCount(formattedBlog.views ?? 0);
         document.title = `W - ${formattedBlog.title}`;
+        if (userResponse?.ok) {
+          const userData: UserProfile = await userResponse.json();
+          if (userData && Array.isArray(userData.favorites)) {
+            const liked = userData.favorites.some(
+              (favId: any) => favId === blogId || favId?._id === blogId
+            );
+            setIsLiked(liked);
+          }
+        }
         const allBlogsResponse = await fetch("/api/blogs");
         if (!allBlogsResponse.ok) console.warn("Related failed");
         const allBlogsData = await allBlogsResponse.json();
@@ -86,7 +108,7 @@ const BlogDetailPage = () => {
           )
           .slice(0, 3);
         setRelatedBlogs(related);
-        if (isSignedIn && isMounted) incrementView(); // Call view increment if logged in
+        if (isSignedIn && isMounted) incrementView();
       } catch (e: any) {
         if (isMounted) {
           setError(e.message || "Failed.");
@@ -98,16 +120,49 @@ const BlogDetailPage = () => {
         if (isMounted) setIsLoading(false);
       }
     };
-    fetchBlogAndRelated();
+    fetchAllData();
     return () => {
       isMounted = false;
     };
   }, [blogId, toast, isSignedIn, getToken]);
 
-  const toggleLike = () => {
-    setIsLiked(!isLiked);
-    toast({ title: isLiked ? "Removed" : "Added" });
+  const toggleLike = async () => {
+    if (!blogId || !isSignedIn || isLikeLoading) return;
+    setIsLikeLoading(true);
+    const currentLikedStatus = isLiked;
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Auth token required");
+      const method = currentLikedStatus ? "DELETE" : "POST";
+      const url = `/api/users/me/favorites/${blogId}`; // Check if this is the correct endpoint structure
+      console.log(`Toggling Like: Method=${method}, URL=${url}`); // <<< Add log
+      const response = await fetch(url, {
+        method: method,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      console.log(`Toggle Like Response Status: ${response.status}`); // <<< Add log
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({
+            msg: `Request failed with status ${response.status}`,
+          }));
+        throw new Error(errorData.msg || `Failed`);
+      }
+      setIsLiked(!currentLikedStatus);
+      toast({ title: currentLikedStatus ? "Removed" : "Added" });
+    } catch (error: any) {
+      console.error("Like/Unlike failed:", error);
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLikeLoading(false);
+    }
   };
+
   const handleShare = () => {
     if (!blog) return;
     if (navigator.share) {
@@ -152,12 +207,7 @@ const BlogDetailPage = () => {
 
   return (
     <div className="max-w-3xl mx-auto space-y-10 py-8 px-4 md:px-0">
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => navigate(-1)}
-        className="text-muted-foreground"
-      >
+      <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
         <ChevronLeft className="mr-2 h-4 w-4" />
         Back
       </Button>
@@ -204,11 +254,18 @@ const BlogDetailPage = () => {
                 variant="outline"
                 size="sm"
                 className={`gap-1 ${
-                  isLiked ? "text-red-500 border-red-300" : ""
+                  isLiked ? "border-red-300 text-red-600" : ""
                 }`}
                 onClick={toggleLike}
+                disabled={isLikeLoading}
               >
-                <Heart className={`h-4 w-4 ${isLiked ? "fill-current" : ""}`} />
+                {isLikeLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Heart
+                    className={`h-4 w-4 ${isLiked ? "fill-current" : ""}`}
+                  />
+                )}
                 {isLiked ? "Liked" : "Like"}
               </Button>
             </SignedIn>
@@ -224,11 +281,11 @@ const BlogDetailPage = () => {
           </div>
         </header>
         {blog.imageUrl && (
-          <div className="aspect-video rel my-6 rounded-lg ovf-hidden border">
+          <div className="rel my-6 rounded-lg ovf-hidden justify-center items-center flex">
             <img
               src={blog.imageUrl}
               alt={blog.title}
-              className="obj-cover w-full h-full"
+              className="obj-cover w-[50%] h-[50%]"
             />
           </div>
         )}

@@ -11,6 +11,7 @@ import {
   Utensils,
   type LucideIcon,
 } from "lucide-react";
+import { Types } from "mongoose"; // Needed potentially for UserProfile favorites type
 
 interface Category {
   id: string;
@@ -33,8 +34,21 @@ export interface Blog {
   imageUrl: string;
   content: string;
   authorClerkId?: string;
+  views?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+export interface UserProfile {
+  id: string;
+  clerkId: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  imageUrl?: string;
+  role: "admin" | "user";
+  favorites: string[] | Blog[];
+  createdAt: string;
+  updatedAt: string;
 }
 export const categories: Category[] = [
   { id: "1", name: "Technology", icon: Laptop },

@@ -7,7 +7,7 @@ import {
   requireAuthManual,
   syncUser,
   isAdmin,
-} from "../middleware/authMiddleware"; // Use the manual auth
+} from "../middleware/authMiddleware";
 import mongoose from "mongoose";
 
 const router = express.Router();
@@ -47,8 +47,7 @@ const uploadToCloudinary = (
   });
 };
 
-// --- Public GET Routes ---
-router.get("/", async (req, res) => {
+router.get("/", async (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string) || 0;
     const authorId = req.query.authorId as string;
@@ -64,7 +63,8 @@ router.get("/", async (req, res) => {
     res.status(500).send("Server Error");
   }
 });
-router.get("/:id", async (req, res) => {
+
+router.get("/:id", async (req: Request, res: Response) => {
   try {
     const blogId = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(blogId)) {
@@ -81,19 +81,13 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// --- POST Increment Views (Requires Authentication) ---
-// Using POST method as in user's provided code
-// Protected by requireAuthManual and syncUser
 router.post(
   "/:id/increment-views",
   requireAuthManual,
   syncUser,
   async (req: Request, res: Response) => {
     const blogId = req.params.id;
-    // Middleware already verified user, req.auth.userId exists
-    console.log(
-      `Increment view requested by User ${req.auth?.userId} for Blog ${blogId}`
-    );
+    console.log(`Inc view User ${req.auth?.userId} for Blog ${blogId}`);
     try {
       if (!mongoose.Types.ObjectId.isValid(blogId))
         return res.status(400).json({ msg: "Invalid ID" });
@@ -102,29 +96,23 @@ router.post(
         { $inc: { views: 1 } },
         { new: true }
       );
-      if (!blog)
-        return res
-          .status(404)
-          .json({ msg: "Blog not found for view increment" });
-      console.log(
-        `View count incremented for blog: ${blogId}, New count: ${blog.views}`
-      );
+      if (!blog) return res.status(404).json({ msg: "Not found for view inc" });
+      console.log(`View Inc OK ${blogId}, New: ${blog.views}`);
       res.json({ success: true, views: blog.views });
     } catch (err: any) {
-      console.error(`POST /blogs/${blogId}/increment-views ERR:`, err);
+      console.error(`POST /inc-views ERR:`, err);
       res.status(500).send("Server Error");
     }
   }
 );
 
-// --- Protected POST Blog ---
 router.post(
   "/",
   requireAuthManual,
   syncUser,
   upload.single("imageFile"),
   async (req, res) => {
-    /* ...unchanged... */ const {
+    const {
       title,
       excerpt,
       date,
@@ -135,8 +123,10 @@ router.post(
     const clerkUserId = req.auth?.userId;
     const localUser = req.user;
     if (!clerkUserId || !localUser)
-      return res.status(401).json({ message: "Auth failed." });
-    let finalImageUrl = manualImageUrl || "DEFAULT_IMG_URL";
+      return res.status(401).json({ m: "Auth failed." });
+    let finalImageUrl =
+      manualImageUrl ||
+      "https://images.unsplash.com/photo-1674027444485-cec3da58eef4?q=80&w=1932&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D";
     try {
       if (req.file)
         finalImageUrl = await uploadToCloudinary(
@@ -170,7 +160,8 @@ router.post(
       console.error("POST ERR:", err);
       if (err instanceof mongoose.Error.ValidationError)
         return res.status(400).json({ m: "Validation Failed", e: err.errors });
-      if (err.message?.includes("size")) return res.status(413);
+      if (err.message?.includes("size"))
+        return res.status(413).json({ m: "Img > 10MB" });
       if (err.http_code === 401)
         return res.status(500).json({ m: "Cloudinary err" });
       res.status(500).send("Server Error");
@@ -178,14 +169,13 @@ router.post(
   }
 );
 
-// --- Protected PUT Blog ---
 router.put(
   "/:id",
   requireAuthManual,
   syncUser,
   upload.single("imageFile"),
   async (req, res) => {
-    /* ...unchanged... */ const {
+    const {
       title,
       excerpt,
       category,
@@ -238,10 +228,8 @@ router.put(
     }
   }
 );
-
-// --- Protected DELETE Blog ---
 router.delete("/:id", requireAuthManual, syncUser, async (req, res) => {
-  /* ...unchanged... */ const blogId = req.params.id;
+  const blogId = req.params.id;
   const requestingUserId = req.auth?.userId;
   const isRequestingUserAdmin = req.user?.role === "admin";
   try {

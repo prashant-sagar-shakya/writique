@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose"; // Import Types
 
 export type UserRole = "admin" | "user";
 
@@ -11,6 +11,7 @@ export interface IUser extends Document {
   role: UserRole;
   createdAt: Date;
   updatedAt: Date;
+  favorites: Types.ObjectId[]; // <<<--- Add this line (Array of Blog ObjectIds)
 }
 
 const UserSchema: Schema = new Schema(
@@ -21,6 +22,7 @@ const UserSchema: Schema = new Schema(
     lastName: { type: String },
     imageUrl: { type: String },
     role: { type: String, enum: ["admin", "user"], default: "user" },
+    favorites: [{ type: Schema.Types.ObjectId, ref: "Blog" }], // <<<--- Add this line
   },
   { timestamps: true }
 );
